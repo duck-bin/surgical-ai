@@ -1,0 +1,21 @@
+# Conda environment for Surgical CVS AI.
+#   conda env create -f environment.yml
+#   conda activate surgical-cvs-ai
+#
+# torch / torchvision are installed from the pytorch channel with CUDA 12.1.
+# The conda-installed torch==2.4.1 satisfies the pin in requirements.txt, so
+# pip will not reinstall it. SAM2 still installs separately from source.
+name: surgical-cvs-ai
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pytorch=2.4.1
+  - torchvision=0.19.1
+  - pytorch-cuda=12.1
+  - pip:
+      - -r requirements.txt
+      - -r requirements-dev.txt

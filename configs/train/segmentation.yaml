@@ -1,0 +1,40 @@
+# Segmentation training config (CholecSeg8k).
+defaults:
+  - _self_
+  - /data: cholecseg8k
+  - /model: sam2_lora        # override with model=unet_baseline for the baseline
+
+seed: 42
+deterministic: true
+precision: bf16-mixed        # fp16-mixed fallback on non-A100 hardware
+
+epochs: 100
+batch_size: 32               # effective; gradient accumulation on smaller GPUs
+low_memory: false            # --low-memory: 16GB cards (smaller batch + accum)
+
+optimizer:
+  name: adamw
+  lr_encoder: 1.0e-4
+  lr_decoder: 1.0e-3
+  weight_decay: 0.01
+
+scheduler:
+  name: cosine
+  warmup_epochs: 5
+
+loss:
+  dice_weight: 1.0
+  focal_weight: 1.0
+  focal_gamma: 2.0
+  class_weighting: inv_sqrt_freq   # inverse sqrt frequency, clipped to [0.5, 10.0]
+
+sampler: weighted_random           # WeightedRandomSampler on inverse class freq
+
+early_stopping:
+  monitor: val_miou
+  mode: max
+  patience: 10
+
+wandb:
+  project: surgical-cvs-ai
+  mode: online                     # set to "offline" / "disabled" if no account

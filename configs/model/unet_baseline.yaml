@@ -1,0 +1,6 @@
+# U-Net baseline segmentation model (credibility anchor — required).
+name: unet_baseline
+arch: unet
+encoder: efficientnet-b4
+encoder_weights: imagenet
+num_classes: 6

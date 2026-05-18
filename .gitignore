@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.python-version
+
+# Datasets — large and/or credentialed, never commit
+data/*
+!data/.gitkeep
+
+# Training artifacts
+outputs/
+wandb/
+lightning_logs/
+checkpoints/
+*.ckpt
+*.pth
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Tests / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

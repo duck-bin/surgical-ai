@@ -1,0 +1,11 @@
+# Endoscapes2023 CVS benchmark (201 videos, 11,090 CVS-annotated frames).
+# Requires PhysioNet credentialed access (czwq-jh81) — download manually.
+name: endoscapes2023
+root: ./data/endoscapes2023
+# TODO (Step 6): verify directory layout vs Mascagni et al., Scientific Data 2024.
+
+num_cvs_criteria: 3
+criteria: [c1_two_structures, c2_triangle_cleared, c3_cystic_plate_exposed]
+
+image_size: 512
+use_official_splits: true             # official video-level train/val/test splits

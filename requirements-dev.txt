@@ -1,0 +1,4 @@
+# Development-only dependencies (notebooks, tooling).
+# Install after requirements.txt:  pip install -r requirements-dev.txt
+jupyterlab>=4.2
+ipykernel>=6.29
