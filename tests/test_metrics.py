@@ -1,12 +1,13 @@
-"""Metric tests plus a real reproducibility check for utils/seeds.
+"""Metric tests: reproducibility, IoU, Dice, and bootstrap CIs.
 
-The known-input metric checks (IoU, Dice, AUROC) are implemented in Step 3 / 7.
-The seeds tests run now so CI exercises real code rather than only skips.
+The known-input checks use hand-computed values. AUROC / CVS metrics are
+implemented in Step 7.
 """
 import numpy as np
 import pytest
 import torch
 
+from src.eval.metrics import bootstrap_ci, dice_score, iou_score
 from src.utils.seeds import seed_everything
 
 
@@ -27,10 +28,51 @@ def test_seed_everything_returns_seed():
     assert seed_everything(7) == 7
 
 
-@pytest.mark.skip(reason="IoU / Dice metrics implemented in Step 3")
-def test_iou_known_input():
-    """IoU on a hand-computed mask pair matches the expected value."""
-    raise NotImplementedError
+def test_iou_score_perfect_prediction():
+    """A prediction identical to the target scores mIoU == 1.0."""
+    mask = torch.randint(0, 6, (4, 8, 8))
+    _, miou = iou_score(mask, mask, num_classes=6)
+    assert miou == pytest.approx(1.0)
+
+
+def test_iou_score_known_partial_overlap():
+    """IoU on a hand-computed 2x2 mask pair matches the expected values."""
+    pred = np.array([[0, 0], [1, 1]])
+    target = np.array([[0, 1], [1, 1]])
+
+    per_class, miou = iou_score(pred, target, num_classes=6)
+
+    assert per_class[0] == pytest.approx(0.5)        # inter 1 / union 2
+    assert per_class[1] == pytest.approx(2.0 / 3.0)  # inter 2 / union 3
+    assert np.isnan(per_class[2])                    # class absent everywhere
+    assert miou == pytest.approx((0.5 + 2.0 / 3.0) / 2.0)
+
+
+def test_dice_score_known_partial_overlap():
+    """Dice on the same hand-computed 2x2 mask pair matches expected values."""
+    pred = np.array([[0, 0], [1, 1]])
+    target = np.array([[0, 1], [1, 1]])
+
+    per_class, _ = dice_score(pred, target, num_classes=6)
+
+    assert per_class[0] == pytest.approx(2.0 / 3.0)  # 2*1 / (2 + 1)
+    assert per_class[1] == pytest.approx(0.8)        # 2*2 / (2 + 3)
+
+
+def test_bootstrap_ci_constant_input():
+    """A constant array yields a degenerate CI equal to the value."""
+    mean, lo, hi = bootstrap_ci(np.full(100, 0.5))
+    assert mean == pytest.approx(0.5)
+    assert lo == pytest.approx(0.5) and hi == pytest.approx(0.5)
+
+
+def test_bootstrap_ci_brackets_the_mean():
+    """The CI brackets the sample mean and is reproducible across seeds."""
+    values = np.linspace(0.0, 1.0, 200)
+    mean, lo, hi = bootstrap_ci(values, n_resamples=500)
+    assert mean == pytest.approx(0.5, abs=0.02)
+    assert lo <= mean <= hi
+    assert bootstrap_ci(values, n_resamples=500) == (mean, lo, hi)
 
 
 @pytest.mark.skip(reason="CVS metrics implemented in Step 7")
