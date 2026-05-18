@@ -1,0 +1,39 @@
+# CVS classifier training config (Endoscapes2023).
+defaults:
+  - _self_
+  - /data: endoscapes2023
+
+seed: 42
+deterministic: true
+precision: bf16-mixed
+
+backbone: vit_small_patch16_224      # timm, ImageNet pretrained
+in_channels: 9                       # 6 segmentation channels + 3 RGB
+num_criteria: 3
+
+epochs: 60
+batch_size: 32
+low_memory: false
+
+optimizer:
+  name: adamw
+  lr_backbone: 1.0e-4
+  lr_heads: 1.0e-3
+  weight_decay: 0.01
+
+scheduler:
+  name: cosine
+  warmup_epochs: 5
+
+loss:
+  name: bce_with_logits
+  class_weights: from_train_set      # computed from Endoscapes2023 train split
+
+early_stopping:
+  monitor: val_map
+  mode: max
+  patience: 10
+
+wandb:
+  project: surgical-cvs-ai
+  mode: online

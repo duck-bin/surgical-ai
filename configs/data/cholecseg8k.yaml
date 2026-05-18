@@ -1,0 +1,18 @@
+# CholecSeg8k segmentation dataset (8,080 frames, 17 Cholec80 video clips).
+name: cholecseg8k
+hf_repo: minwoosun/CholecSeg8k        # TODO: verify; Kaggle fallback newslab/cholecseg8k
+cache_dir: ./data/cholecseg8k
+
+num_classes: 6
+class_names: [background, liver, gallbladder, cystic_duct, cystic_artery, tool]
+
+image_size: 512                       # letterbox-padded from native 854x480
+
+# Video-level split (never split by frame — prevents leakage).
+split:
+  by: video_id
+  train: 12
+  val: 2
+  test: 3
+  seed: 42
+  # TODO (Step 2): pin explicit video IDs for each split.

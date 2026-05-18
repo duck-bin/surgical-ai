@@ -1,0 +1,16 @@
+[project]
+name = "surgical-cvs-ai"
+version = "0.1.0"
+description = "Automated Critical View of Safety (CVS) assessment in laparoscopic cholecystectomy"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+[tool.pytest.ini_options]
+# `src/` layout: make `import src...` work without installing the package.
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "gpu: test requires a CUDA GPU (skipped in CPU-only CI)",
+]
