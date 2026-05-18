@@ -24,7 +24,7 @@ segmentation-models-pytorch>=0.3.4 # U-Net baseline only
 
 # --- Data loading / augmentation ---
 datasets>=3.0.0                    # HuggingFace loader for CholecSeg8k
-albumentations>=1.4.0
+albumentations>=2.0,<3            # 2.x API used by src/data/transforms.py
 opencv-python-headless>=4.10.0
 pycocotools>=2.0.8
 pandas>=2.2.0

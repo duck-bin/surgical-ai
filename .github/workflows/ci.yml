@@ -21,7 +21,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install torch==2.4.1 --index-url https://download.pytorch.org/whl/cpu
-          pip install numpy pytest pytest-cov
+          pip install numpy pytest pytest-cov albumentations
 
       - name: Run tests (CPU only, GPU tests skipped)
         run: pytest -m "not gpu"
