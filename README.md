@@ -77,18 +77,25 @@ bash scripts/download_cholecseg8k.sh
 # Endoscapes2023 requires PhysioNet credentialed access — download manually
 # to ./data/endoscapes2023/, then:
 bash scripts/prepare_endoscapes.sh
+
+# 3. Train: SAM2 + LoRA segmentation, then the CVS classifier
+python -m src.train.train_segmentation model=sam2_lora   # or model=unet_baseline
+python -m src.train.train_cvs
+
+# 4. Benchmark + demo
+python -m src.eval.benchmark_runner    # -> results/benchmark_table.md
+python -m app.gradio_demo              # interactive CVS assessment demo
 ```
 
-Expected runtime and cost (RunPod A100, see Step-1 plan for details):
+The configs default to a 16 GB T4 (`low_memory: true` — per-device batch 1 with
+16x gradient accumulation); set `low_memory=false` on a larger GPU. Expected
+runtime and cost (RunPod A100, see Step-1 plan for details):
 
 | Stage | Runtime (A100) | Approx. cost |
 |---|---|---|
 | CholecSeg8k segmentation training | ~6–8 h | ~$10–15 |
 | Endoscapes CVS classifier | ~3–4 h | ~$5–8 |
 | **Full reproduction** | — | **< $50** |
-
-A `--low-memory` flag is provided for 16 GB GPUs (smaller batch + gradient
-accumulation).
 
 ## 5. Limitations
 
