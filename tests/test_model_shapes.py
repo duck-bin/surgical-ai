@@ -117,7 +117,53 @@ def test_sam2_lora_param_groups_split():
     assert all(len(g["params"]) > 0 for g in groups)
 
 
-@pytest.mark.skip(reason="CVS classifier implemented in Step 7")
 def test_cvs_classifier_forward_shape():
-    """(B, 9, 224, 224) input -> (B, 3) criterion logits."""
-    raise NotImplementedError
+    """(B, 9, 224, 224) input -> (B, 3) criterion logits, with gradient flow."""
+    from src.models.cvs_classifier import CVSClassifier
+
+    model = CVSClassifier(in_channels=9, num_criteria=3, pretrained=False)
+    out = model(torch.randn(2, 9, 224, 224))
+    assert tuple(out.shape) == (2, 3)
+
+    out.sum().backward()
+    assert any(p.grad is not None for p in model.parameters() if p.requires_grad)
+
+
+def test_cvs_classifier_param_groups_split():
+    """param_groups yields backbone + heads groups at the requested LRs."""
+    from src.models.cvs_classifier import CVSClassifier
+
+    model = CVSClassifier(in_channels=9, num_criteria=3, pretrained=False)
+    groups = model.param_groups(lr_backbone=1e-4, lr_heads=1e-3)
+    assert len(groups) == 2
+    assert groups[0]["lr"] == 1e-4 and groups[1]["lr"] == 1e-3
+    assert all(len(g["params"]) > 0 for g in groups)
+
+
+def test_cvs_module_smoke():
+    """End-to-end CVS Lightning pipeline runs a train + val step."""
+    import pytorch_lightning as pl
+    import torch.nn as nn
+    from torch.utils.data import DataLoader, Dataset
+
+    from src.models.cvs_classifier import CVSClassifier
+    from src.train.lightning_modules import CVSModule
+
+    class _Synthetic(Dataset):
+        def __len__(self):
+            return 4
+
+        def __getitem__(self, index):
+            return {"image": torch.rand(3, 64, 64),
+                    "criteria": torch.randint(0, 2, (3,)).float(),
+                    "cvs_score": torch.randint(0, 4, ()).long()}
+
+    # A trivial 3->6 conv stands in for the frozen segmentation model.
+    module = CVSModule(
+        CVSClassifier(in_channels=9, num_criteria=3, pretrained=False),
+        nn.Conv2d(3, 6, kernel_size=1), max_epochs=1, warmup_epochs=0,
+    )
+    loader = DataLoader(_Synthetic(), batch_size=2)
+    trainer = pl.Trainer(fast_dev_run=True, accelerator="cpu", logger=False,
+                         enable_checkpointing=False)
+    trainer.fit(module, loader, loader)

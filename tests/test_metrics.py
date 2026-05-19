@@ -1,13 +1,18 @@
-"""Metric tests: reproducibility, IoU, Dice, and bootstrap CIs.
+"""Metric tests: reproducibility, IoU, Dice, bootstrap CIs, and CVS metrics.
 
-The known-input checks use hand-computed values. AUROC / CVS metrics are
-implemented in Step 7.
+The known-input checks use hand-computed values.
 """
 import numpy as np
 import pytest
 import torch
 
-from src.eval.metrics import bootstrap_ci, dice_score, iou_score
+from src.eval.metrics import (
+    bootstrap_ci,
+    cvs_metrics,
+    dice_score,
+    iou_score,
+    quadratic_weighted_kappa,
+)
 from src.utils.seeds import seed_everything
 
 
@@ -75,7 +80,41 @@ def test_bootstrap_ci_brackets_the_mean():
     assert bootstrap_ci(values, n_resamples=500) == (mean, lo, hi)
 
 
-@pytest.mark.skip(reason="CVS metrics implemented in Step 7")
-def test_auroc_known_input():
-    """AUROC on a hand-computed score set matches the expected value."""
-    raise NotImplementedError
+def test_cvs_metrics_perfect_separation():
+    """Perfectly separable logits give per-criterion AP and mAP of 1.0."""
+    logits = np.array([[-3.0, -3.0, -3.0],
+                       [-3.0, -3.0, 3.0],
+                       [3.0, 3.0, -3.0],
+                       [3.0, 3.0, 3.0]])
+    targets = np.array([[0, 0, 0], [0, 0, 1], [1, 1, 0], [1, 1, 1]])
+
+    metrics = cvs_metrics(logits, targets)
+
+    assert metrics["map"] == pytest.approx(1.0)
+    assert all(ap == pytest.approx(1.0) for ap in metrics["ap"])
+    assert all(ba == pytest.approx(1.0) for ba in metrics["balanced_accuracy"])
+
+
+def test_cvs_metrics_single_class_criterion_is_nan():
+    """A criterion with one class present yields NaN AP, excluded from mAP."""
+    logits = np.array([[1.0, -1.0], [2.0, -2.0], [-1.0, 1.0]])
+    targets = np.array([[1, 0], [1, 0], [0, 0]])  # criterion 1 is all-zero
+
+    metrics = cvs_metrics(logits, targets)
+
+    assert np.isnan(metrics["ap"][1])
+    assert not np.isnan(metrics["ap"][0])
+    assert metrics["map"] == pytest.approx(metrics["ap"][0])
+
+
+def test_quadratic_weighted_kappa_perfect_agreement():
+    """Identical CVS-score sequences give kappa 1.0."""
+    scores = [0, 1, 2, 3, 1, 2]
+    assert quadratic_weighted_kappa(scores, scores) == pytest.approx(1.0)
+
+
+def test_quadratic_weighted_kappa_penalizes_larger_errors():
+    """Quadratic weighting scores near-misses above far-misses."""
+    near = quadratic_weighted_kappa([0, 1, 2, 3], [0, 1, 1, 3])
+    far = quadratic_weighted_kappa([0, 1, 2, 3], [3, 2, 1, 0])
+    assert near > far

@@ -10,10 +10,17 @@ precision: bf16-mixed
 backbone: vit_small_patch16_224      # timm, ImageNet pretrained
 in_channels: 9                       # 6 segmentation channels + 3 RGB
 num_criteria: 3
+classifier_image_size: 224           # ViT-Small input resolution
+
+# Frozen segmentation model that supplies the 6 mask channels (trained first
+# via src/train/train_segmentation.py).
+segmentation:
+  model_config: configs/model/sam2_lora.yaml
+  checkpoint: outputs/sam2_lora/best.ckpt
 
 epochs: 60
-batch_size: 32
-low_memory: false
+batch_size: 16               # effective batch; low_memory splits it 1 x 16-accum
+low_memory: true             # T4/16GB GPUs: per-device batch 1, 16x grad accum
 
 optimizer:
   name: adamw

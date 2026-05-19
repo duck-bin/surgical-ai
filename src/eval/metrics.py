@@ -86,10 +86,46 @@ def bootstrap_ci(values, n_resamples: int = 1000, alpha: float = 0.05,
 
 
 def cvs_metrics(pred_logits, targets):
-    """Per-criterion AP, balanced accuracy and mAP for the 3 CVS criteria."""
-    raise NotImplementedError("Implemented in Step 7.")
+    """Per-criterion AP, balanced accuracy and mAP for the CVS criteria.
+
+    Args:
+        pred_logits: (N, C) raw logits (or probabilities) for C binary criteria.
+        targets: (N, C) binary {0, 1} ground-truth criteria.
+
+    Returns:
+        dict with ``ap`` (per-criterion average precision; NaN for a criterion
+        with a single class present), ``balanced_accuracy`` (per-criterion),
+        and ``map`` (mean AP over criteria).
+    """
+    from sklearn.metrics import average_precision_score, balanced_accuracy_score
+
+    logits = _to_numpy(pred_logits).astype(np.float64)
+    target = _to_numpy(targets).astype(np.int64)
+    if logits.ndim == 1:
+        logits, target = logits.reshape(-1, 1), target.reshape(-1, 1)
+    # Sigmoid is monotonic, so it does not affect the ranking-based AP; it only
+    # matters for thresholding the balanced-accuracy predictions at 0.5.
+    scores = 1.0 / (1.0 + np.exp(-logits))
+    preds = (scores >= 0.5).astype(np.int64)
+
+    ap, balanced = [], []
+    for c in range(target.shape[1]):
+        y_true = target[:, c]
+        if y_true.min() == y_true.max():  # one class only -> metrics undefined
+            ap.append(float("nan"))
+            balanced.append(float("nan"))
+            continue
+        ap.append(float(average_precision_score(y_true, scores[:, c])))
+        balanced.append(float(balanced_accuracy_score(y_true, preds[:, c])))
+    mean_ap = float(np.nanmean(ap)) if np.any(~np.isnan(ap)) else 0.0
+    return {"ap": ap, "balanced_accuracy": balanced, "map": mean_ap}
 
 
 def quadratic_weighted_kappa(pred_score, true_score):
     """Cohen's quadratic-weighted kappa on the 0-3 CVS score."""
-    raise NotImplementedError("Implemented in Step 7.")
+    from sklearn.metrics import cohen_kappa_score
+
+    pred = _to_numpy(pred_score).astype(np.int64).ravel()
+    true = _to_numpy(true_score).astype(np.int64).ravel()
+    return float(cohen_kappa_score(true, pred, weights="quadratic",
+                                   labels=[0, 1, 2, 3]))

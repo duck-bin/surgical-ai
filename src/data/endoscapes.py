@@ -150,6 +150,17 @@ class Endoscapes2023Dataset(Dataset):
     def __len__(self) -> int:
         return len(self._samples)
 
+    def cvs_labels(self) -> np.ndarray:
+        """All binarized CVS criteria as an (N, 3) int array (no image I/O).
+
+        Useful for class-balance statistics (e.g. BCE ``pos_weight``).
+        """
+        return np.array(
+            [binarize_cvs_criteria(raw, self.threshold)
+             for _, raw in self._samples],
+            dtype=np.int64,
+        )
+
     def __getitem__(self, index: int) -> dict:
         path, raw_criteria = self._samples[index]
         criteria = binarize_cvs_criteria(raw_criteria, self.threshold)
