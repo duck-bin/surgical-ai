@@ -1,23 +1,19 @@
 # SAM2 + LoRA segmentation model (primary).
+#
+# Dense 6-class head: SAM2's mask decoder is repurposed to emit a prompt-free
+# (B, num_classes, H, W) logit map (num_multimask_outputs = num_classes), so it
+# trains with the shared SegmentationModule exactly like the U-Net baseline.
 name: sam2_lora
-base_checkpoint: facebook/sam2-hiera-base-plus   # ~89M params
-# TODO: verify SAM2 loading path (native sam2 package vs transformers Sam2Model).
-
-lora:
-  image_encoder:
-    rank: 8
-    alpha: 16
-    target_modules: [qkv]
-  mask_decoder:
-    rank: 16
-    alpha: 32
-
-mask_generation:
-  mode: automatic            # no point prompts at inference
-  points_per_side: 32        # 32x32 grid
-  nms_iou_threshold: 0.7
+loader: transformers                              # transformers.Sam2Model
+base_checkpoint: facebook/sam2-hiera-base-plus    # ~80M params
 
 num_classes: 6
-mask_classifier:             # assigns each SAM2 mask to one of 6 classes
-  type: mlp                  # MLP on SAM2 mask-token embeddings
-  hidden_dim: 256
+sam2_image_size: 1024     # SAM2 Hiera backbone input resolution
+
+# LoRA on the (frozen) Hiera vision encoder attention; the small mask decoder
+# is fully fine-tuned (repurposed for a new class count).
+lora:
+  rank: 8
+  alpha: 16
+  dropout: 0.05
+  target_modules: [qkv]

@@ -67,12 +67,10 @@ Qualitative examples: _TBD (added in Step 9)._
 ## 4. Reproducing
 
 ```bash
-# 1. Environment (Python >= 3.11)
-pip install torch==2.4.1 torchvision==0.19.1 \
-    --index-url https://download.pytorch.org/whl/cu121
+# 1. Environment (Python >= 3.11; Colab / RunPod GPU runtime recommended)
 pip install -r requirements.txt
-# SAM2 (verify pinned commit first — see requirements.txt):
-# pip install "git+https://github.com/facebookresearch/sam2.git@<COMMIT>"
+# torch is preinstalled on Colab/RunPod; SAM2 loads via transformers (Sam2Model)
+# — no separate install.
 
 # 2. Data
 bash scripts/download_cholecseg8k.sh

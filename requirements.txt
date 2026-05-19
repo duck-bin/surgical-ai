@@ -1,34 +1,33 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Surgical CVS AI — pinned Python dependencies   (Python >= 3.11)
+# Surgical CVS AI — Python dependencies   (Python >= 3.11)
 #
-# Install torch / torchvision FIRST with CUDA 12.1 wheels:
-#   pip install torch==2.4.1 torchvision==0.19.1 \
-#       --index-url https://download.pytorch.org/whl/cu121
-# Then:
-#   pip install -r requirements.txt
+# Install:  pip install -r requirements.txt
 #
-# SAM2 is NOT on PyPI — install separately from source (see bottom + README).
+# On Google Colab / RunPod the GPU build of torch is preinstalled; the
+# torch/torchvision ranges below are satisfied by it, so `pip install` does
+# not trigger a slow reinstall. SAM2 is loaded through transformers
+# (Sam2Model) — no separate install.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# --- Deep learning core (install via cu121 index, see header) ---
-torch==2.4.1
-torchvision==0.19.1
+# --- Deep learning core (preinstalled on Colab / RunPod GPU runtimes) ---
+torch>=2.5.1
+torchvision>=0.20.0
 
 # --- Parameter-efficient fine-tuning ---
 peft>=0.13.0
 
 # --- Models / backbones ---
-transformers>=4.45
+transformers>=5.8,<6               # SAM2 (Sam2Model) — verified with 5.8.1
 timm>=1.0.9                        # ViT-Small + EfficientNet-B4 backbones
 segmentation-models-pytorch>=0.3.4 # U-Net baseline only
 
 # --- Data loading / augmentation ---
 datasets>=3.0.0                    # HuggingFace loader for CholecSeg8k
-albumentations>=1.4.0
+albumentations>=2.0,<3            # 2.x API used by src/data/transforms.py
 opencv-python-headless>=4.10.0
 pycocotools>=2.0.8
 pandas>=2.2.0
-numpy>=1.26,<2.1                   # TODO: verify upper bound vs SAM2 / opencv
+numpy>=1.26                        # numpy 2.x ok (Colab default; torch 2.5+)
 
 # --- Training framework / config / logging ---
 pytorch-lightning>=2.4.0
@@ -46,7 +45,7 @@ gradio>=4.44.0
 pytest>=8.3.0
 pytest-cov>=5.0.0
 
-# --- SAM2 (install from source — NOT installed by this file) ---
-# TODO: verify exact commit hash AND torch compatibility before pinning.
-# Recent SAM2 commits may require torch>=2.5.1 (conflicts with torch==2.4.1).
-# sam2 @ git+https://github.com/facebookresearch/sam2.git@<PINNED_COMMIT>
+# --- SAM2 ---
+# SAM2 is loaded via transformers (transformers.Sam2Model) — no separate
+# install needed. This avoids the native facebookresearch/sam2 package and its
+# hydra-core based config system. See src/models/sam2_lora.py.
