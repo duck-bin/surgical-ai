@@ -23,7 +23,7 @@ jobs:
           pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
           pip install numpy pytest pytest-cov albumentations \
             segmentation-models-pytorch pytorch-lightning transformers peft \
-            scikit-learn
+            scikit-learn matplotlib gradio
 
       - name: Run tests (CPU only, GPU tests skipped)
         run: pytest -m "not gpu"
