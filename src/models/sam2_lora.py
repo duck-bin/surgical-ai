@@ -1,8 +1,8 @@
 """SAM2 with LoRA adapters for surgical anatomical segmentation (primary model).
 
 Base: ``facebook/sam2-hiera-base-plus``, loaded via ``transformers.Sam2Model``
-(the native ``sam2`` package is avoided -- it pins ``torch>=2.5.1`` and pulls
-``hydra-core``). LoRA adapters (PEFT) are added to the Hiera vision encoder's
+(the native ``sam2`` package is avoided -- it brings its own ``hydra-core``
+config system). LoRA adapters (PEFT) are added to the Hiera vision encoder's
 attention projections; the small mask decoder is fully fine-tuned and
 repurposed to emit a dense, prompt-free ``num_classes`` logit map -- its
 ``num_multimask_outputs`` is set to the number of target classes. This keeps
