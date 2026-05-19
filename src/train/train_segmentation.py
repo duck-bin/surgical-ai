@@ -30,13 +30,18 @@ from src.train.lightning_modules import SegmentationModule
 from src.utils.seeds import seed_everything
 
 
-def build_model(model_cfg: DictConfig):
-    """Construct a segmentation model from the ``model`` config group."""
+def build_model(model_cfg: DictConfig, pretrained: bool = True):
+    """Construct a segmentation model from the ``model`` config group.
+
+    ``pretrained`` loads pretrained backbone weights; pass ``False`` when the
+    weights will be overwritten anyway (e.g. the benchmark runner loading a
+    trained checkpoint) to skip the download.
+    """
     name = model_cfg.name
     if name == "unet_baseline":
         return UNetBaseline(
             encoder=model_cfg.encoder,
-            encoder_weights=model_cfg.encoder_weights,
+            encoder_weights=model_cfg.encoder_weights if pretrained else None,
             num_classes=model_cfg.num_classes,
         )
     if name == "sam2_lora":
@@ -48,13 +53,18 @@ def build_model(model_cfg: DictConfig):
             lora_dropout=model_cfg.lora.dropout,
             lora_target_modules=list(model_cfg.lora.target_modules),
             sam2_image_size=model_cfg.sam2_image_size,
+            pretrained=pretrained,
         )
     raise ValueError(f"Unknown model '{name}'.")
 
 
 def _batch_and_accumulation(effective_bs: int, low_memory: bool) -> tuple[int, int]:
-    """Split an effective batch size into per-device batch + grad accumulation."""
-    per_device = 4 if low_memory else 16
+    """Split an effective batch size into per-device batch + grad accumulation.
+
+    ``low_memory`` targets a 16GB T4: per-device batch 1 (SAM2 @ 1024 fits only
+    one frame), so the effective batch is reached purely by accumulation.
+    """
+    per_device = 1 if low_memory else 4
     per_device = min(per_device, effective_bs)
     accumulate = max(1, effective_bs // per_device)
     return per_device, accumulate

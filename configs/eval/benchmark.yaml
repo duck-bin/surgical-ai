@@ -1,0 +1,23 @@
+# Benchmark config: evaluate trained segmentation models on the CholecSeg8k
+# test split and emit the README comparison table (mIoU, Cystic Duct Dice)
+# with 95% bootstrap CIs.  Run:  python -m src.eval.benchmark_runner
+defaults:
+  - _self_
+  - /data: cholecseg8k
+
+seed: 42
+device: auto                 # auto -> cuda if available, else cpu
+batch_size: 1                # T4: SAM2 @ 1024 inference fits one frame
+num_workers: 4
+config_dir: configs/model    # directory holding the per-model configs
+output_path: results/benchmark_table.md
+
+# One row per model. `model_config` names a file in `config_dir`; `checkpoint`
+# is a SegmentationModule Lightning checkpoint. A missing checkpoint -> TBD row.
+models:
+  - label: U-Net (ours)
+    model_config: unet_baseline
+    checkpoint: outputs/unet_baseline/best.ckpt
+  - label: SAM2 + LoRA (ours)
+    model_config: sam2_lora
+    checkpoint: outputs/sam2_lora/best.ckpt

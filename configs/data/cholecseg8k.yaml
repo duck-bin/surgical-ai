@@ -6,7 +6,7 @@ cache_dir: ./data/cholecseg8k
 num_classes: 6
 class_names: [background, liver, gallbladder, cystic_duct, cystic_artery, tool]
 
-image_size: 512                       # letterbox-padded from native 854x480
+image_size: 1024                      # SAM2 Hiera backbone resolution; letterboxed from 854x480
 
 # Video-level split (never split by frame — prevents leakage).
 split:

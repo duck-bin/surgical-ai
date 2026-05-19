@@ -9,8 +9,8 @@ deterministic: true
 precision: bf16-mixed        # fp16-mixed fallback on non-A100 hardware
 
 epochs: 100
-batch_size: 32               # effective; gradient accumulation on smaller GPUs
-low_memory: false            # --low-memory: 16GB cards (smaller batch + accum)
+batch_size: 16               # effective batch; low_memory splits it 1 x 16-accum
+low_memory: true             # T4/16GB GPUs: per-device batch 1, 16x grad accum
 
 optimizer:
   name: adamw
@@ -37,4 +37,4 @@ early_stopping:
 
 wandb:
   project: surgical-cvs-ai
-  mode: online                     # set to "offline" / "disabled" if no account
+  mode: disabled                   # set to "online"/"offline" to log to wandb

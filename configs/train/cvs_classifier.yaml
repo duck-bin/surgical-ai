@@ -36,4 +36,4 @@ early_stopping:
 
 wandb:
   project: surgical-cvs-ai
-  mode: online
+  mode: disabled

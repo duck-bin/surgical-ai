@@ -111,7 +111,45 @@ def test_eval_transforms_are_deterministic():
     assert tuple(first["mask"].shape) == (512, 512)
 
 
-@pytest.mark.skip(reason="Endoscapes2023 loader implemented in Step 6")
 def test_endoscapes_cvs_labels_binary():
-    """CVS criteria labels are binary {0, 1}; the CVS score lies in [0, 3]."""
-    raise NotImplementedError
+    """CVS criteria binarize to {0, 1}; the CVS score lies in [0, 3]."""
+    from src.data.endoscapes import binarize_cvs_criteria, cvs_score
+
+    # Fractional 3-annotator agreement -> majority-vote binary labels.
+    criteria = binarize_cvs_criteria([1.0, 0.33, 0.67], threshold=0.5)
+    assert criteria == (1, 0, 1)
+    assert all(c in (0, 1) for c in criteria)
+    assert cvs_score(criteria) == 2
+
+    assert cvs_score(binarize_cvs_criteria([0.0, 0.0, 0.0])) == 0
+    assert cvs_score(binarize_cvs_criteria([1.0, 1.0, 1.0])) == 3
+    for raw in ([0.2, 0.8, 0.5], [1, 0, 1], [0.49, 0.51, 1.0]):
+        assert 0 <= cvs_score(binarize_cvs_criteria(raw)) <= 3
+
+
+def test_endoscapes_dataset_reads_frames_and_labels(tmp_path):
+    """The dataset pairs on-disk frames with their CVS CSV annotations."""
+    from PIL import Image
+
+    from src.data.endoscapes import Endoscapes2023Dataset
+
+    frames_dir = tmp_path / "train"
+    frames_dir.mkdir()
+    for name in ("v1_1.jpg", "v1_2.jpg"):
+        Image.new("RGB", (64, 48), color=(120, 30, 30)).save(frames_dir / name)
+    (tmp_path / "train_cvs.csv").write_text(
+        "frame,c1_two_structures,c2_triangle_cleared,c3_cystic_plate_exposed\n"
+        "v1_1.jpg,1.0,0.0,1.0\n"
+        "v1_2.jpg,0.33,0.67,1.0\n"
+    )
+
+    dataset = Endoscapes2023Dataset(root=tmp_path, split="train", image_size=32)
+
+    assert len(dataset) == 2
+    item = dataset[0]
+    assert tuple(item["image"].shape) == (3, 32, 32)
+    assert torch.is_floating_point(item["image"])
+    assert tuple(item["criteria"].shape) == (3,)
+    assert set(item["criteria"].tolist()) <= {0.0, 1.0}
+    assert 0 <= int(item["cvs_score"]) <= 3
+    assert int(item["cvs_score"]) == int(item["criteria"].sum())
