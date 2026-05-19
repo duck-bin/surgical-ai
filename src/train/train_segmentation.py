@@ -10,6 +10,8 @@ Usage:
 """
 from __future__ import annotations
 
+import os
+
 import hydra
 import pytorch_lightning as pl
 import torch
@@ -128,13 +130,15 @@ def main(cfg: DictConfig) -> None:
         warmup_epochs=cfg.scheduler.warmup_epochs,
     )
 
+    checkpoint_dir = f"outputs/{cfg.model.name}"
     callbacks = [
         EarlyStopping(monitor=cfg.early_stopping.monitor,
                       mode=cfg.early_stopping.mode,
                       patience=cfg.early_stopping.patience),
         ModelCheckpoint(monitor=cfg.early_stopping.monitor,
                         mode=cfg.early_stopping.mode, save_top_k=1,
-                        dirpath=f"outputs/{cfg.model.name}", filename="best"),
+                        dirpath=checkpoint_dir, filename="best",
+                        save_last=True),
     ]
     trainer = pl.Trainer(
         max_epochs=cfg.epochs,
@@ -143,7 +147,11 @@ def main(cfg: DictConfig) -> None:
         callbacks=callbacks,
         log_every_n_steps=10,
     )
-    trainer.fit(module, train_loader, val_loader)
+    # Resume from the last checkpoint when a previous run was interrupted
+    # (e.g. a Colab disconnect) -- re-running the script then continues.
+    last_ckpt = os.path.join(checkpoint_dir, "last.ckpt")
+    trainer.fit(module, train_loader, val_loader,
+                ckpt_path=last_ckpt if os.path.exists(last_ckpt) else None)
     trainer.test(module, test_loader, ckpt_path="best")
 
 

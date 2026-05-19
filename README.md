@@ -37,17 +37,20 @@ flowchart LR
     E --> F[CVS score 0–3]
 ```
 
-**Segmentation.** Primary model: `facebook/sam2-hiera-base-plus` with LoRA
-adapters on the image encoder (rank 8) and mask decoder (rank 16), used in
-automatic-mask-generation mode. Baseline: EfficientNet-B4 U-Net.
+**Segmentation.** Primary model: `facebook/sam2-hiera-base-plus`, loaded via
+`transformers.Sam2Model`. LoRA adapters (rank 8) are applied to the Hiera image
+encoder's attention; the small mask decoder is fully fine-tuned and repurposed
+to emit a prompt-free dense 6-class logit map (`num_multimask_outputs = 6`, no
+point/box prompts). Baseline: EfficientNet-B4 U-Net.
 
 **CVS classification.** ViT-Small backbone consuming a 9-channel input
 (6-channel segmentation mask + RGB frame), with three independent binary heads
 for Strasberg's criteria.
 
-Training details: PyTorch Lightning + Hydra, mixed precision (bf16 on A100),
-AdamW, cosine schedule with 5-epoch warmup, full seed control and deterministic
-algorithms. See `configs/` for exact hyperparameters.
+Training details: PyTorch Lightning + Hydra, mixed precision (bf16, with
+automatic fp16 fallback on non-Ampere GPUs), AdamW with separate
+encoder/decoder learning rates, cosine schedule with 5-epoch warmup, full seed
+control and deterministic algorithms. See `configs/` for exact hyperparameters.
 
 ## 3. Results
 
@@ -66,6 +69,11 @@ Qualitative examples: _TBD (added in Step 9)._
 
 ## 4. Reproducing
 
+**On Google Colab** — open `notebooks/04_colab_pipeline.ipynb` and run it top
+to bottom. It is idempotent (safe to re-run after a disconnect) and resumes
+interrupted training from the last checkpoint. The manual steps below are the
+equivalent.
+
 ```bash
 # 1. Environment (Python >= 3.11; Colab / RunPod GPU runtime recommended)
 pip install -r requirements.txt
@@ -78,7 +86,9 @@ bash scripts/download_cholecseg8k.sh
 # to ./data/endoscapes2023/, then:
 bash scripts/prepare_endoscapes.sh
 
-# 3. Train: SAM2 + LoRA segmentation, then the CVS classifier
+# 3. Train: SAM2 + LoRA segmentation, then the CVS classifier.
+#    Checkpoints are written to outputs/<model>/best.ckpt; train_cvs and the
+#    benchmark runner read them automatically.
 python -m src.train.train_segmentation model=sam2_lora   # or model=unet_baseline
 python -m src.train.train_cvs
 

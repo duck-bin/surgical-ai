@@ -9,6 +9,8 @@ Usage:
 """
 from __future__ import annotations
 
+import os
+
 import hydra
 import numpy as np
 import pytorch_lightning as pl
@@ -82,13 +84,15 @@ def main(cfg: DictConfig) -> None:
         classifier_image_size=cfg.classifier_image_size,
     )
 
+    checkpoint_dir = "outputs/cvs_classifier"
     callbacks = [
         EarlyStopping(monitor=cfg.early_stopping.monitor,
                       mode=cfg.early_stopping.mode,
                       patience=cfg.early_stopping.patience),
         ModelCheckpoint(monitor=cfg.early_stopping.monitor,
                         mode=cfg.early_stopping.mode, save_top_k=1,
-                        dirpath="outputs/cvs_classifier", filename="best"),
+                        dirpath=checkpoint_dir, filename="best",
+                        save_last=True),
     ]
     trainer = pl.Trainer(
         max_epochs=cfg.epochs,
@@ -97,7 +101,10 @@ def main(cfg: DictConfig) -> None:
         callbacks=callbacks,
         log_every_n_steps=10,
     )
-    trainer.fit(module, train_loader, val_loader)
+    # Resume from the last checkpoint when a previous run was interrupted.
+    last_ckpt = os.path.join(checkpoint_dir, "last.ckpt")
+    trainer.fit(module, train_loader, val_loader,
+                ckpt_path=last_ckpt if os.path.exists(last_ckpt) else None)
     trainer.test(module, test_loader, ckpt_path="best")
 
 

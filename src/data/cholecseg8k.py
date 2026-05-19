@@ -253,11 +253,40 @@ class CholecSeg8kDataset(Dataset):
         for candidate in ("path", "file_name", "filename", "image_path"):
             if candidate in columns:
                 return [_video_id_from_path(p) for p in self._hf[candidate]]
+        # minwoosun/CholecSeg8k exposes no video-id column; recover the id
+        # from the image feature's stored file path (.../videoNN/...).
+        if self.image_column in columns:
+            ids = self._video_ids_from_image_paths()
+            if ids is not None:
+                return ids
         raise KeyError(
-            "No video-id column found for the video-level split. Available "
-            f"columns: {columns}. Pass video_id_column=... explicitly. "
-            "# TODO: verify the CholecSeg8k HF schema."
+            "No video-id column found for the video-level split, and no "
+            f"'videoNN' marker in the image paths. Available columns: "
+            f"{columns}. Pass video_id_column=... explicitly."
         )
+
+    def _video_ids_from_image_paths(self) -> list[str] | None:
+        """Recover per-frame video ids from the image feature's file paths.
+
+        Returns one ``videoNN`` id per frame, or ``None`` if the paths carry
+        no usable video marker.
+        """
+        try:
+            import pyarrow.compute as pc
+            from datasets import Image as HfImage
+
+            undecoded = self._hf.cast_column(
+                self.image_column, HfImage(decode=False))
+            paths = pc.struct_field(
+                undecoded.data.column(self.image_column), "path").to_pylist()
+        except Exception:
+            return None
+        if not paths or any(not path for path in paths):
+            return None
+        ids = [_video_id_from_path(path) for path in paths]
+        if all(re.fullmatch(r"video[_-]?\d+", vid) for vid in ids):
+            return ids
+        return None
 
     def __len__(self) -> int:
         return len(self._indices)
