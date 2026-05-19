@@ -17,9 +17,12 @@ if [[ ! -d "${ROOT}" ]]; then
   exit 1
 fi
 
-# TODO (Step 6): verify expected subdirectories against
-# Mascagni et al., Scientific Data 2024.
-EXPECTED=("train" "val" "test")
+# Expected layout (see src/data/endoscapes.py):
+#   <ROOT>/<split>/        frame directories
+#   <ROOT>/<split>_cvs.csv per-frame CVS annotations
+# TODO: verify against Mascagni et al., Scientific Data 2024.
+EXPECTED=("train" "val" "test"
+          "train_cvs.csv" "val_cvs.csv" "test_cvs.csv")
 missing=0
 for d in "${EXPECTED[@]}"; do
   if [[ ! -e "${ROOT}/${d}" ]]; then
