@@ -149,4 +149,4 @@ if __name__ == "__main__":
     import hydra
 
     hydra.main(version_base=None, config_path="../../configs",
-               config_name="eval/benchmark")(run_benchmark)()
+               config_name="benchmark")(run_benchmark)()

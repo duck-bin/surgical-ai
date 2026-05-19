@@ -1,6 +1,6 @@
 """Entry point: train the CVS classifier on Endoscapes2023.
 
-Hydra-configured (see configs/train/cvs_classifier.yaml). A frozen segmentation
+Hydra-configured (see configs/cvs_classifier.yaml). A frozen segmentation
 model supplies the 6 mask channels; the 9-channel (6 mask + 3 RGB) input feeds
 a ViT-Small classifier with 3 binary criterion heads.
 
@@ -39,7 +39,7 @@ def _pos_weight(dataset: Endoscapes2023Dataset) -> torch.Tensor:
 
 
 @hydra.main(version_base=None, config_path="../../configs",
-            config_name="train/cvs_classifier")
+            config_name="cvs_classifier")
 def main(cfg: DictConfig) -> None:
     seed_everything(cfg.seed, cfg.deterministic)
 
@@ -88,7 +88,7 @@ def main(cfg: DictConfig) -> None:
                       patience=cfg.early_stopping.patience),
         ModelCheckpoint(monitor=cfg.early_stopping.monitor,
                         mode=cfg.early_stopping.mode, save_top_k=1,
-                        filename="{epoch}-{val_map:.4f}"),
+                        dirpath="outputs/cvs_classifier", filename="best"),
     ]
     trainer = pl.Trainer(
         max_epochs=cfg.epochs,

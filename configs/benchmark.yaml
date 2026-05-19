@@ -3,7 +3,7 @@
 # with 95% bootstrap CIs.  Run:  python -m src.eval.benchmark_runner
 defaults:
   - _self_
-  - /data: cholecseg8k
+  - data: cholecseg8k
 
 seed: 42
 device: auto                 # auto -> cuda if available, else cpu

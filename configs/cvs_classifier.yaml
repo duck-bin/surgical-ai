@@ -1,7 +1,7 @@
 # CVS classifier training config (Endoscapes2023).
 defaults:
   - _self_
-  - /data: endoscapes2023
+  - data: endoscapes2023
 
 seed: 42
 deterministic: true

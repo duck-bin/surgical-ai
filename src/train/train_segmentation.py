@@ -1,6 +1,6 @@
 """Entry point: train an anatomical segmentation model on CholecSeg8k.
 
-Hydra-configured (see configs/train/segmentation.yaml). Supports the U-Net
+Hydra-configured (see configs/segmentation.yaml). Supports the U-Net
 baseline and SAM2 + LoRA via the ``model=`` override, plus a ``low_memory=true``
 flag for 16GB GPUs (smaller per-device batch + gradient accumulation).
 
@@ -80,7 +80,7 @@ def _resolve_precision(requested: str) -> str:
 
 
 @hydra.main(version_base=None, config_path="../../configs",
-            config_name="train/segmentation")
+            config_name="segmentation")
 def main(cfg: DictConfig) -> None:
     seed_everything(cfg.seed, cfg.deterministic)
 
@@ -134,7 +134,7 @@ def main(cfg: DictConfig) -> None:
                       patience=cfg.early_stopping.patience),
         ModelCheckpoint(monitor=cfg.early_stopping.monitor,
                         mode=cfg.early_stopping.mode, save_top_k=1,
-                        filename="{epoch}-{val_miou:.4f}"),
+                        dirpath=f"outputs/{cfg.model.name}", filename="best"),
     ]
     trainer = pl.Trainer(
         max_epochs=cfg.epochs,

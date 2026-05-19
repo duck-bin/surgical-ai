@@ -1,8 +1,8 @@
 # Segmentation training config (CholecSeg8k).
 defaults:
   - _self_
-  - /data: cholecseg8k
-  - /model: sam2_lora        # override with model=unet_baseline for the baseline
+  - data: cholecseg8k
+  - model: sam2_lora         # override with model=unet_baseline for the baseline
 
 seed: 42
 deterministic: true
