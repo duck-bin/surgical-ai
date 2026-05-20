@@ -32,12 +32,13 @@ Original 13 CholecSeg8k classes:
 Splits are video-level (12 train / 2 val / 3 test of 17 videos) to prevent
 frame leakage.
 
-VERIFICATION NEEDED — the HuggingFace Hub is unreachable from the build
-environment, so two things below are best-effort and MUST be confirmed against
-the real dataset before training (see notebooks/01_eda_cholecseg8k.ipynb):
-    * ``CHOLECSEG8K_COLOR_MAP`` — the raw color-mask RGB palette.
-    * The HF dataset column layout (image / mask / video-id column names),
-      configurable via ``CholecSeg8kDataset`` arguments.
+The HF dataset (``minwoosun/CholecSeg8k``) exposes
+``image`` / ``color_mask`` / ``watershed_mask`` / ``annotation_mask`` and
+**no video-id column**; the per-frame video id is recovered from the image
+file path (:meth:`CholecSeg8kDataset._video_ids_from_image_paths`). The
+:data:`CHOLECSEG8K_COLOR_MAP` palette below is still best-effort -- verify it
+against the real masks in ``notebooks/01_data_exploration.ipynb`` and correct
+any mismatches.
 """
 from __future__ import annotations
 
@@ -93,13 +94,10 @@ NAME13_TO_IDX6: dict[str, int] = {
     "L-hook Electrocautery": 5,
 }
 
-# Alias kept for the Step 1 skeleton API.
-CHOLECSEG8K_13_TO_6: dict[str, int] = NAME13_TO_IDX6
-
 # CholecSeg8k color-mask RGB triple -> 13-class name.
-# TODO: VERIFY against the dataset before training. The "verify mask encoding"
-# cell in notebooks/01_eda_cholecseg8k.ipynb prints the actual unique colors
-# present in the downloaded masks — correct this table if they differ.
+# TODO: verify against the real masks. The pixel-distribution cell in
+# notebooks/01_data_exploration.ipynb surfaces any mismatch -- correct this
+# table if the colors differ.
 CHOLECSEG8K_COLOR_MAP: dict[tuple[int, int, int], str] = {
     (127, 127, 127): "Black Background",
     (210, 140, 140): "Abdominal Wall",

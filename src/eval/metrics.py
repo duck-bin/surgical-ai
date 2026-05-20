@@ -4,7 +4,6 @@ Segmentation : per-class IoU, per-class Dice, mIoU, mDice.
 CVS          : per-criterion AP, balanced accuracy, mAP across 3 criteria.
 Composite    : Cohen's quadratic-weighted kappa between predicted and
                ground-truth CVS score (0-3).
-Segmentation metrics are implemented here; the CVS metrics are added in Step 7.
 """
 from __future__ import annotations
 

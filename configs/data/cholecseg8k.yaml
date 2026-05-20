@@ -1,6 +1,6 @@
 # CholecSeg8k segmentation dataset (8,080 frames, 17 Cholec80 video clips).
 name: cholecseg8k
-hf_repo: minwoosun/CholecSeg8k        # TODO: verify; Kaggle fallback newslab/cholecseg8k
+hf_repo: minwoosun/CholecSeg8k
 cache_dir: ./data/cholecseg8k
 
 num_classes: 6

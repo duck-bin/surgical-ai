@@ -153,3 +153,14 @@ def test_endoscapes_dataset_reads_frames_and_labels(tmp_path):
     assert set(item["criteria"].tolist()) <= {0.0, 1.0}
     assert 0 <= int(item["cvs_score"]) <= 3
     assert int(item["cvs_score"]) == int(item["criteria"].sum())
+
+
+def test_video_id_from_path_extracts_video_number():
+    """_video_id_from_path pulls 'videoNN' from a CholecSeg8k-style file path."""
+    from src.data.cholecseg8k import _video_id_from_path
+
+    assert _video_id_from_path(
+        "/cache/datasets/extracted/x/video01/frame_0.png") == "video01"
+    assert _video_id_from_path("/x/y/video_12/frame.png") == "video_12"
+    # No videoNN marker -> the loader treats this as an unusable result.
+    assert _video_id_from_path("/no/marker/here.png") == "/no/marker/here.png"

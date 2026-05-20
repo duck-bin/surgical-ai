@@ -2,7 +2,6 @@
 
 Wraps the models, losses, optimizers (AdamW with separate encoder/decoder
 learning rates), the cosine schedule with linear warmup, and metric logging.
-The segmentation module is implemented here; the CVS module is added in Step 7.
 """
 from __future__ import annotations
 
