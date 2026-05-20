@@ -69,7 +69,7 @@ Qualitative examples: _TBD (added in Step 9)._
 
 ## 4. Reproducing
 
-**On Google Colab** — open `notebooks/04_colab_pipeline.ipynb` and run it top
+**On Google Colab** — open `notebooks/run_pipeline.ipynb` and run it top
 to bottom. It is idempotent (safe to re-run after a disconnect) and resumes
 interrupted training from the last checkpoint. The manual steps below are the
 equivalent.
