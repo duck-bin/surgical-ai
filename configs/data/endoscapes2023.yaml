@@ -2,8 +2,10 @@
 # Requires PhysioNet credentialed access (czwq-jh81) — download manually.
 name: endoscapes2023
 root: ./data/endoscapes2023
-# Expected layout: <root>/<split>/*.jpg + <root>/<split>_cvs.csv
-# TODO: verify vs Mascagni et al., Scientific Data 2024 (see src/data/endoscapes.py).
+# Layout (the official endoscapes.zip extracts to an endoscapes/ dir; the loader
+# descends into it automatically):
+#   <root>/<split>/<vid>_<frame>.jpg + <root>/all_metadata.csv (C1/C2/C3, is_ds_keyframe)
+# Download: bash scripts/download_endoscapes.sh
 
 num_cvs_criteria: 3
 criteria: [c1_two_structures, c2_triangle_cleared, c3_cystic_plate_exposed]

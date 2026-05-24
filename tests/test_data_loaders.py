@@ -128,31 +128,49 @@ def test_endoscapes_cvs_labels_binary():
 
 
 def test_endoscapes_dataset_reads_frames_and_labels(tmp_path):
-    """The dataset pairs on-disk frames with their CVS CSV annotations."""
+    """The dataset pairs <vid>_<frame>.jpg frames with all_metadata.csv labels."""
     from PIL import Image
 
     from src.data.endoscapes import Endoscapes2023Dataset
 
     frames_dir = tmp_path / "train"
     frames_dir.mkdir()
-    for name in ("v1_1.jpg", "v1_2.jpg"):
+    for name in ("1_100.jpg", "1_200.jpg", "1_300.jpg"):
         Image.new("RGB", (64, 48), color=(120, 30, 30)).save(frames_dir / name)
-    (tmp_path / "train_cvs.csv").write_text(
-        "frame,c1_two_structures,c2_triangle_cleared,c3_cystic_plate_exposed\n"
-        "v1_1.jpg,1.0,0.0,1.0\n"
-        "v1_2.jpg,0.33,0.67,1.0\n"
+    # all_metadata.csv: averaged criteria + the is_ds_keyframe flag. The
+    # non-keyframe (1_300) must be filtered out.
+    (tmp_path / "all_metadata.csv").write_text(
+        "vid,frame,avg_cvs,C1,C2,C3,is_ds_keyframe\n"
+        '1,100,"[1.0,0.0,1.0]",1.0,0.0,1.0,True\n'
+        '1,200,"[0.33,0.67,1.0]",0.333,0.667,1.0,True\n'
+        '1,300,"[0.0,0.0,0.0]",0.0,0.0,0.0,False\n'
     )
 
     dataset = Endoscapes2023Dataset(root=tmp_path, split="train", image_size=32)
 
-    assert len(dataset) == 2
-    item = dataset[0]
+    assert len(dataset) == 2  # 1_300 is not a CVS keyframe -> excluded
+    item = dataset[0]         # 1_100 -> criteria (1, 0, 1), score 2
     assert tuple(item["image"].shape) == (3, 32, 32)
     assert torch.is_floating_point(item["image"])
-    assert tuple(item["criteria"].shape) == (3,)
-    assert set(item["criteria"].tolist()) <= {0.0, 1.0}
-    assert 0 <= int(item["cvs_score"]) <= 3
-    assert int(item["cvs_score"]) == int(item["criteria"].sum())
+    assert item["criteria"].tolist() == [1.0, 0.0, 1.0]
+    assert int(item["cvs_score"]) == 2
+
+
+def test_endoscapes_dataset_descends_into_endoscapes_dir(tmp_path):
+    """root pointing at the parent of an endoscapes/ dir still resolves."""
+    from PIL import Image
+
+    from src.data.endoscapes import Endoscapes2023Dataset
+
+    inner = tmp_path / "endoscapes"
+    (inner / "val").mkdir(parents=True)
+    Image.new("RGB", (32, 32)).save(inner / "val" / "5_900.jpg")
+    (inner / "all_metadata.csv").write_text(
+        "vid,frame,C1,C2,C3,is_ds_keyframe\n5,900,1.0,1.0,1.0,True\n")
+
+    dataset = Endoscapes2023Dataset(root=tmp_path, split="val", image_size=16)
+    assert len(dataset) == 1
+    assert int(dataset[0]["cvs_score"]) == 3
 
 
 def test_video_id_from_path_extracts_video_number():
