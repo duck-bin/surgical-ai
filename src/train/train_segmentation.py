@@ -100,13 +100,20 @@ def main(cfg: DictConfig) -> None:
 
     # Per-class loss weights and the sampler are derived from the train split
     # under the deterministic eval transform (same frame order as train_ds).
-    stats_ds = CholecSeg8kDataset(split="train", transform=eval_tf, **common)
-    _, frequencies = compute_pixel_frequencies(stats_ds, NUM_CLASSES)
-    class_weights = class_loss_weights(frequencies)
+    # Both require full passes over the train set, so skip them when disabled
+    # (e.g. a smoke test with sampler=null loss.class_weighting=none).
+    need_sampler = cfg.sampler == "weighted_random"
+    need_class_weights = str(cfg.loss.class_weighting).lower() not in (
+        "none", "null", "off", "false", "")
+    class_weights = None
+    if need_class_weights or need_sampler:
+        stats_ds = CholecSeg8kDataset(split="train", transform=eval_tf, **common)
+        if need_class_weights:
+            _, frequencies = compute_pixel_frequencies(stats_ds, NUM_CLASSES)
+            class_weights = class_loss_weights(frequencies)
 
     per_device_bs, accumulate = _batch_and_accumulation(cfg.batch_size, cfg.low_memory)
-    sampler = (make_weighted_sampler(stats_ds)
-               if cfg.sampler == "weighted_random" else None)
+    sampler = make_weighted_sampler(stats_ds) if need_sampler else None
     train_loader = DataLoader(
         train_ds, batch_size=per_device_bs, sampler=sampler,
         shuffle=sampler is None, num_workers=4, pin_memory=True, drop_last=True,
