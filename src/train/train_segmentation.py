@@ -116,11 +116,11 @@ def main(cfg: DictConfig) -> None:
     sampler = make_weighted_sampler(stats_ds) if need_sampler else None
     train_loader = DataLoader(
         train_ds, batch_size=per_device_bs, sampler=sampler,
-        shuffle=sampler is None, num_workers=4, pin_memory=True, drop_last=True,
+        shuffle=sampler is None, num_workers=cfg.num_workers, pin_memory=True, drop_last=True,
     )
-    val_loader = DataLoader(val_ds, batch_size=per_device_bs, num_workers=4,
+    val_loader = DataLoader(val_ds, batch_size=per_device_bs, num_workers=cfg.num_workers,
                             pin_memory=True)
-    test_loader = DataLoader(test_ds, batch_size=per_device_bs, num_workers=4,
+    test_loader = DataLoader(test_ds, batch_size=per_device_bs, num_workers=cfg.num_workers,
                              pin_memory=True)
 
     module = SegmentationModule(
