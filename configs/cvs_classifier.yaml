@@ -21,6 +21,7 @@ segmentation:
 epochs: 60
 batch_size: 16               # effective batch; low_memory splits it 1 x 16-accum
 low_memory: true             # T4/16GB GPUs: per-device batch 1, 16x grad accum
+limit_batches: 1.0           # fraction (<=1.0) or int #batches per epoch; e.g. 20 for a smoke test
 
 optimizer:
   name: adamw

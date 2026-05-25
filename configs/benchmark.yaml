@@ -11,6 +11,7 @@ batch_size: 1                # T4: SAM2 @ 1024 inference fits one frame
 num_workers: 4
 config_dir: configs/model    # directory holding the per-model configs
 output_path: results/benchmark_table.md
+max_eval_batches: null       # null -> full test split; int caps it (e.g. 40 for a smoke test)
 
 # One row per model. `model_config` names a file in `config_dir`; `checkpoint`
 # is a SegmentationModule Lightning checkpoint. A missing checkpoint -> TBD row.

@@ -98,6 +98,9 @@ def main(cfg: DictConfig) -> None:
         max_epochs=cfg.epochs,
         precision=_resolve_precision(cfg.precision),
         accumulate_grad_batches=accumulate,
+        limit_train_batches=cfg.limit_batches,
+        limit_val_batches=cfg.limit_batches,
+        limit_test_batches=cfg.limit_batches,
         callbacks=callbacks,
         log_every_n_steps=10,
     )

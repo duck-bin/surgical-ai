@@ -28,17 +28,23 @@ _NAN_CI = (float("nan"), float("nan"), float("nan"))
 
 @torch.no_grad()
 def evaluate_model(model, dataloader, num_classes: int = NUM_CLASSES,
-                   device: str = "cpu") -> dict[str, list[float]]:
+                   device: str = "cpu",
+                   max_batches: int | None = None) -> dict[str, list[float]]:
     """Run a segmentation model over a dataloader, returning per-image metrics.
 
     Returns ``{"miou": [...], "cystic_duct_dice": [...]}`` with one value per
     test image. A value is NaN when the class is absent from both the
     prediction and the target (handled downstream by :func:`bootstrap_ci`).
+
+    ``max_batches`` caps the number of batches evaluated (a smoke-test knob);
+    ``None`` evaluates the whole dataloader.
     """
     model = model.to(device).eval()
     miou: list[float] = []
     cystic_duct_dice: list[float] = []
-    for batch in dataloader:
+    for index, batch in enumerate(dataloader):
+        if max_batches is not None and index >= max_batches:
+            break
         preds = model(batch["image"].to(device)).argmax(dim=1).cpu()
         for pred, target in zip(preds, batch["mask"]):
             _, image_miou = iou_score(pred, target, num_classes)
@@ -122,6 +128,7 @@ def run_benchmark(cfg) -> None:
     loader = DataLoader(test_ds, batch_size=cfg.batch_size,
                         num_workers=cfg.num_workers, pin_memory=True)
 
+    max_batches = cfg.get("max_eval_batches", None)
     results: dict = {}
     for entry in cfg.models:
         checkpoint = Path(entry.checkpoint)
@@ -134,9 +141,12 @@ def run_benchmark(cfg) -> None:
             Path(cfg.config_dir) / f"{entry.model_config}.yaml")
         model = load_segmentation_checkpoint(
             build_model(model_cfg, pretrained=False), checkpoint)
-        print(f"[eval] {entry.label} on {len(test_ds)} test frames ...")
+        scope = (f"{max_batches} batches" if max_batches is not None
+                 else f"{len(test_ds)} test frames")
+        print(f"[eval] {entry.label} on {scope} ...")
         results[entry.label] = summarize(
-            evaluate_model(model, loader, NUM_CLASSES, device), seed=cfg.seed)
+            evaluate_model(model, loader, NUM_CLASSES, device,
+                           max_batches=max_batches), seed=cfg.seed)
 
     table = format_table(results)
     output_path = Path(cfg.output_path)
