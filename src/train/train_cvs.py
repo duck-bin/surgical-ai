@@ -63,10 +63,10 @@ def main(cfg: DictConfig) -> None:
     per_device_bs, accumulate = _batch_and_accumulation(cfg.batch_size,
                                                         cfg.low_memory)
     train_loader = DataLoader(train_ds, batch_size=per_device_bs, shuffle=True,
-                              num_workers=4, pin_memory=True, drop_last=True)
-    val_loader = DataLoader(val_ds, batch_size=per_device_bs, num_workers=4,
+                              num_workers=cfg.num_workers, pin_memory=True, drop_last=True)
+    val_loader = DataLoader(val_ds, batch_size=per_device_bs, num_workers=cfg.num_workers,
                             pin_memory=True)
-    test_loader = DataLoader(test_ds, batch_size=per_device_bs, num_workers=4,
+    test_loader = DataLoader(test_ds, batch_size=per_device_bs, num_workers=cfg.num_workers,
                              pin_memory=True)
 
     pos_weight = (_pos_weight(train_ds)
