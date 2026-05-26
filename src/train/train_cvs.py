@@ -10,6 +10,7 @@ Usage:
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import hydra
 import numpy as np
@@ -29,6 +30,40 @@ from src.train.train_segmentation import (
     build_model,
 )
 from src.utils.seeds import seed_everything
+
+
+def _report_cvs_results(test_results: list[dict]) -> None:
+    """Surface the CVS test metrics so they're easy to spot after a long run.
+
+    Prints a clearly delimited summary block and writes the same numbers to
+    ``results/cvs_metrics.md`` (mirroring how the benchmark runner persists its
+    table), so the values survive a Colab scroll-back or disconnect.
+    """
+    metrics = test_results[0] if test_results else {}
+    rows = [
+        ("CVS mAP (mean AP over 3 criteria)", metrics.get("test_map")),
+        ("CVS QWK (score 0-3 agreement)", metrics.get("test_qwk")),
+        ("test_loss", metrics.get("test_loss")),
+    ]
+
+    def fmt(value) -> str:
+        try:
+            return f"{float(value):.4f}"
+        except (TypeError, ValueError):
+            return "n/a"
+
+    bar = "=" * 60
+    print(f"\n{bar}\n  CVS classifier -- test results\n{bar}")
+    for label, value in rows:
+        print(f"  {label:34s}: {fmt(value)}")
+    print(bar)
+
+    output_path = Path("results/cvs_metrics.md")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    table = "# CVS classifier -- test results\n\n| Metric | Value |\n|---|---|\n"
+    table += "".join(f"| {label} | {fmt(value)} |\n" for label, value in rows)
+    output_path.write_text(table)
+    print(f"  saved -> {output_path}\n")
 
 
 def _pos_weight(dataset: Endoscapes2023Dataset) -> torch.Tensor:
@@ -108,7 +143,8 @@ def main(cfg: DictConfig) -> None:
     last_ckpt = os.path.join(checkpoint_dir, "last.ckpt")
     trainer.fit(module, train_loader, val_loader,
                 ckpt_path=last_ckpt if os.path.exists(last_ckpt) else None)
-    trainer.test(module, test_loader, ckpt_path="best")
+    test_results = trainer.test(module, test_loader, ckpt_path="best")
+    _report_cvs_results(test_results)
 
 
 if __name__ == "__main__":
