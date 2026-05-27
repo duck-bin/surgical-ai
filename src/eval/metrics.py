@@ -1,6 +1,7 @@
 """Evaluation metrics with 95% bootstrap confidence intervals.
 
 Segmentation : per-class IoU, per-class Dice, mIoU, mDice.
+Temporal     : per-class frame-to-frame mask stability for a video clip.
 CVS          : per-criterion AP, balanced accuracy, mAP across 3 criteria.
 Composite    : Cohen's quadratic-weighted kappa between predicted and
                ground-truth CVS score (0-3).
@@ -118,6 +119,49 @@ def cvs_metrics(pred_logits, targets):
         balanced.append(float(balanced_accuracy_score(y_true, preds[:, c])))
     mean_ap = float(np.nanmean(ap)) if np.any(~np.isnan(ap)) else 0.0
     return {"ap": ap, "balanced_accuracy": balanced, "map": mean_ap}
+
+
+def temporal_consistency(pred_clip, num_classes: int = 6):
+    """Per-class temporal stability of a predicted segmentation clip.
+
+    Quantifies frame-to-frame mask *flicker* over a video clip: for each class
+    and each consecutive frame pair, the IoU of the predicted class regions is
+    computed, then averaged over all pairs. Higher means more stable (less
+    flicker). This measures prediction *stability*, not correctness -- pair it
+    with :func:`iou_score` against ground truth.
+
+    Args:
+        pred_clip: (T, H, W) integer label maps -- a model's argmax predictions
+            for T consecutive frames.
+        num_classes: number of segmentation classes.
+
+    Returns:
+        ``(per_class, mean)``. ``per_class`` is a float array of shape
+        (num_classes,); a class absent from every consecutive pair is NaN and
+        excluded from the mean (matching :func:`iou_score`).
+    """
+    clip = _to_numpy(pred_clip).astype(np.int64)
+    if clip.ndim != 3:
+        raise ValueError(f"pred_clip must be (T, H, W); got shape {clip.shape}.")
+    num_frames = clip.shape[0]
+    per_class = np.full(num_classes, np.nan)
+    if num_frames < 2:
+        return per_class, 0.0
+
+    pair_ious = np.full((num_frames - 1, num_classes), np.nan)
+    for t in range(num_frames - 1):
+        current, nxt = clip[t].ravel(), clip[t + 1].ravel()
+        for c in range(num_classes):
+            a, b = current == c, nxt == c
+            union = int(np.count_nonzero(a | b))
+            if union:
+                pair_ious[t, c] = np.count_nonzero(a & b) / union
+
+    for c in range(num_classes):
+        if np.any(~np.isnan(pair_ious[:, c])):
+            per_class[c] = float(np.nanmean(pair_ious[:, c]))
+    mean = float(np.nanmean(per_class)) if np.any(~np.isnan(per_class)) else 0.0
+    return per_class, mean
 
 
 def quadratic_weighted_kappa(pred_score, true_score):

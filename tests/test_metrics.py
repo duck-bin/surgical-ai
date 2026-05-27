@@ -12,6 +12,7 @@ from src.eval.metrics import (
     dice_score,
     iou_score,
     quadratic_weighted_kappa,
+    temporal_consistency,
 )
 from src.utils.seeds import seed_everything
 
@@ -118,3 +119,38 @@ def test_quadratic_weighted_kappa_penalizes_larger_errors():
     near = quadratic_weighted_kappa([0, 1, 2, 3], [0, 1, 1, 3])
     far = quadratic_weighted_kappa([0, 1, 2, 3], [3, 2, 1, 0])
     assert near > far
+
+
+def test_temporal_consistency_static_clip_is_perfect():
+    """A clip whose frames are identical has perfect (1.0) consistency."""
+    frame = np.array([[0, 0, 1], [2, 2, 1]])
+    clip = np.stack([frame, frame, frame])  # (T=3, H, W)
+
+    per_class, mean = temporal_consistency(clip, num_classes=3)
+
+    assert mean == pytest.approx(1.0)
+    for c in (0, 1, 2):
+        assert per_class[c] == pytest.approx(1.0)
+
+
+def test_temporal_consistency_flicker_lowers_score():
+    """A class that appears/disappears between frames scores below a stable one."""
+    # Class 1 is stable across both frames; class 2 flickers off then on.
+    frame_a = np.array([[1, 1, 2], [0, 0, 0]])
+    frame_b = np.array([[1, 1, 0], [0, 0, 2]])
+    clip = np.stack([frame_a, frame_b])
+
+    per_class, _ = temporal_consistency(clip, num_classes=3)
+
+    assert per_class[1] == pytest.approx(1.0)   # stable class
+    assert per_class[2] < per_class[1]          # flickering class is penalised
+
+
+def test_temporal_consistency_single_frame_has_no_pairs():
+    """A clip shorter than 2 frames has no pairs: NaN per class, 0.0 mean."""
+    clip = np.array([[[0, 1], [2, 0]]])  # (T=1, H, W)
+
+    per_class, mean = temporal_consistency(clip, num_classes=3)
+
+    assert mean == 0.0
+    assert np.all(np.isnan(per_class))
