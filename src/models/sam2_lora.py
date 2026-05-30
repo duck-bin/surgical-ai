@@ -31,8 +31,10 @@ class SAM2LoRASegmenter(nn.Module):
         lora_target_modules: attention sub-module names to adapt.
         sam2_image_size: spatial size the SAM2 Hiera backbone expects; inputs
             are resized to this internally and predictions resized back.
-        pretrained: load pretrained SAM2 weights (needs network access). When
-            False the model is randomly initialised -- used for offline tests.
+        pretrained: load pretrained SAM2 weights (downloads the large weight
+            file). When False the weights are randomly initialised; the
+            architecture still comes from ``base_checkpoint``'s config (a small
+            cached download) so a trained checkpoint loads back correctly.
     """
 
     def __init__(self, base_checkpoint: str = "facebook/sam2-hiera-base-plus",
@@ -50,7 +52,12 @@ class SAM2LoRASegmenter(nn.Module):
                 base_checkpoint, config=config, ignore_mismatched_sizes=True,
             )
         else:
-            config = Sam2Config()
+            # The architecture must still come from base_checkpoint's config so
+            # that a checkpoint trained with pretrained=True reloads into a
+            # pretrained=False model (benchmark / CVS). A default Sam2Config()
+            # builds a different (smaller) Hiera and fails the strict load.
+            # Only the pretrained *weights* are skipped here.
+            config = Sam2Config.from_pretrained(base_checkpoint)
             config.mask_decoder_config.num_multimask_outputs = num_classes
             sam = Sam2Model(config)
 
