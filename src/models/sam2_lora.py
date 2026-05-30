@@ -71,14 +71,24 @@ class SAM2LoRASegmenter(nn.Module):
         for param in self.sam.get_base_model().mask_decoder.parameters():
             param.requires_grad_(True)
 
-    def forward(self, x):
-        """(B, 3, H, W) RGB input -> (B, num_classes, H, W) segmentation logits."""
+    def native_logits(self, x):
+        """(B, 3, H, W) RGB input -> (B, num_classes, h, w) at SAM2's mask
+        resolution (no resize back to the input size).
+
+        Exposed so the temporal model can fuse a window of frames at the mask
+        decoder's native resolution before a single upsample to (H, W).
+        """
         height, width = x.shape[-2:]
         if (height, width) != (self.sam2_image_size, self.sam2_image_size):
             x = F.interpolate(x, size=(self.sam2_image_size, self.sam2_image_size),
                               mode="bilinear", align_corners=False)
         outputs = self.sam(pixel_values=x, multimask_output=True)
-        logits = outputs.pred_masks.squeeze(1)  # (B, 1, C, h, w) -> (B, C, h, w)
+        return outputs.pred_masks.squeeze(1)  # (B, 1, C, h, w) -> (B, C, h, w)
+
+    def forward(self, x):
+        """(B, 3, H, W) RGB input -> (B, num_classes, H, W) segmentation logits."""
+        height, width = x.shape[-2:]
+        logits = self.native_logits(x)
         return F.interpolate(logits, size=(height, width), mode="bilinear",
                              align_corners=False)
 

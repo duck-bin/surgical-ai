@@ -19,7 +19,12 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 
-from src.data.cholecseg8k import CLASS_NAMES, NUM_CLASSES, CholecSeg8kDataset
+from src.data.cholecseg8k import (
+    CLASS_NAMES,
+    NUM_CLASSES,
+    CholecSeg8kDataset,
+    CholecSeg8kWindowDataset,
+)
 from src.data.transforms import build_eval_transforms
 from src.eval.metrics import bootstrap_ci, dice_score, iou_score
 
@@ -178,16 +183,27 @@ def run_benchmark(cfg) -> None:
     from src.train.train_segmentation import build_model
 
     device = _resolve_device(str(cfg.get("device", "auto")))
-    test_ds = CholecSeg8kDataset(
+    eval_tf = build_eval_transforms(cfg.data.image_size)
+    test_kwargs = dict(
         split="test",
-        transform=build_eval_transforms(cfg.data.image_size),
         hf_repo=cfg.data.hf_repo,
         cache_dir=cfg.data.cache_dir,
         image_size=cfg.data.image_size,
         split_seed=cfg.data.split.seed,
     )
-    loader = DataLoader(test_ds, batch_size=cfg.batch_size,
-                        num_workers=cfg.num_workers, pin_memory=True)
+
+    def make_test_loader(model_cfg):
+        """Frame loader by default; a clip loader for temporal models so they
+        are evaluated *with* temporal context (not collapsed to T=1)."""
+        window = model_cfg.get("window", None)
+        if window is not None:
+            dataset = CholecSeg8kWindowDataset(window=window, transform=eval_tf,
+                                               **test_kwargs)
+        else:
+            dataset = CholecSeg8kDataset(transform=eval_tf, **test_kwargs)
+        loader = DataLoader(dataset, batch_size=cfg.batch_size,
+                            num_workers=cfg.num_workers, pin_memory=True)
+        return loader, len(dataset)
 
     max_batches = cfg.get("max_eval_batches", None)
     results: dict = {}
@@ -202,8 +218,9 @@ def run_benchmark(cfg) -> None:
             Path(cfg.config_dir) / f"{entry.model_config}.yaml")
         model = load_segmentation_checkpoint(
             build_model(model_cfg, pretrained=False), checkpoint)
+        loader, num_items = make_test_loader(model_cfg)
         scope = (f"{max_batches} batches" if max_batches is not None
-                 else f"{len(test_ds)} test frames")
+                 else f"{num_items} test items")
         print(f"[eval] {entry.label} on {scope} ...")
         results[entry.label] = summarize(
             evaluate_model(model, loader, NUM_CLASSES, device,

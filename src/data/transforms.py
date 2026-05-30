@@ -40,9 +40,16 @@ def _letterbox(image_size: int) -> list:
     ]
 
 
-def build_train_transforms(image_size: int = 512) -> A.Compose:
-    """Albumentations training pipeline (geometric + photometric + surgical)."""
-    return A.Compose(
+def build_train_transforms(image_size: int = 512, replay: bool = False) -> A.Compose:
+    """Albumentations training pipeline (geometric + photometric + surgical).
+
+    ``replay=True`` returns an :class:`A.ReplayCompose` instead of a plain
+    :class:`A.Compose`. The temporal path uses it so the *same* random
+    augmentation is applied to every frame in a window (spatial coherence is
+    required for the ConvGRU); see ``CholecSeg8kWindowDataset``.
+    """
+    compose = A.ReplayCompose if replay else A.Compose
+    return compose(
         [
             *_letterbox(image_size),
             # --- Geometric (no VerticalFlip — anatomically nonsensical) ---

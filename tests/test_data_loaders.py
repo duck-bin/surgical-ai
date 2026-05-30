@@ -12,6 +12,8 @@ from src.data.cholecseg8k import (
     CHOLECSEG8K_13_CLASSES,
     CHOLECSEG8K_COLOR_MAP,
     NAME13_TO_IDX6,
+    _frame_index_from_path,
+    make_frame_windows,
     make_video_level_split,
     remap_color_mask,
     remap_index_mask,
@@ -74,6 +76,46 @@ def test_video_level_split_is_deterministic():
     assert make_video_level_split(ids, seed=42) == make_video_level_split(ids, seed=42)
 
 
+def test_frame_index_from_path_parses_order():
+    """_frame_index_from_path takes the last integer in the basename."""
+    assert _frame_index_from_path("/x/video01/frame_80_endo.png") == 80
+    assert _frame_index_from_path("123.png") == 123
+    assert _frame_index_from_path("no_number.png") is None
+
+
+def test_make_frame_windows_respects_video_boundaries():
+    """Windows are contiguous within a video and never cross video boundaries."""
+    # Two videos interleaved in arrival order; order_keys give per-video order.
+    video_ids = ["a", "a", "b", "a", "b", "b"]
+    order_keys = [0, 1, 0, 2, 1, 2]
+    windows = make_frame_windows(video_ids, order_keys, window=3)
+
+    # video a frames are items 0,1,3 (keys 0,1,2) -> one window (0,1,3)
+    # video b frames are items 2,4,5 (keys 0,1,2) -> one window (2,4,5)
+    assert (0, 1, 3) in windows
+    assert (2, 4, 5) in windows
+    assert len(windows) == 2
+    # Every window stays within a single video.
+    for win in windows:
+        assert len({video_ids[i] for i in win}) == 1
+    # Target frame (last in window) ordering is the latest per video.
+    assert all(len(win) == 3 for win in windows)
+
+
+def test_make_frame_windows_sliding_and_short_videos():
+    """Stride-1 sliding windows; videos shorter than the window are dropped."""
+    video_ids = ["v", "v", "v", "v", "short"]
+    order_keys = [0, 1, 2, 3, 0]
+    windows = make_frame_windows(video_ids, order_keys, window=3)
+    assert windows == [(0, 1, 2), (1, 2, 3)]  # 'short' (1 frame) contributes none
+
+
+def test_make_frame_windows_falls_back_to_item_order():
+    """With no order keys, items keep their arrival order within each video."""
+    windows = make_frame_windows(["v", "v", "v"], [None, None, None], window=2)
+    assert windows == [(0, 1), (1, 2)]
+
+
 def test_train_transforms_output_shapes():
     """Train pipeline yields a (3,512,512) float image and (512,512) mask."""
     pytest.importorskip("albumentations")
@@ -91,6 +133,28 @@ def test_train_transforms_output_shapes():
     assert torch.is_floating_point(img_t)
     assert not torch.isnan(img_t).any()
     assert int(mask_t.min()) >= 0 and int(mask_t.max()) <= 5
+
+
+def test_replay_transform_is_consistent_across_frames():
+    """ReplayCompose replays identical augmentation -> coherent window frames."""
+    pytest.importorskip("albumentations")
+    import albumentations as A
+
+    from src.data.transforms import build_train_transforms
+
+    transform = build_train_transforms(image_size=128, replay=True)
+    assert isinstance(transform, A.ReplayCompose)
+
+    rng = np.random.default_rng(0)
+    image = rng.integers(0, 256, size=(96, 128, 3), dtype=np.uint8)
+    mask = rng.integers(0, 6, size=(96, 128), dtype=np.uint8)
+
+    first = transform(image=image, mask=mask)
+    assert "replay" in first  # ReplayCompose exposes the sampled params
+    # Replaying on the SAME frame reproduces the SAME output (deterministic).
+    replayed = transform.replay(first["replay"], image=image, mask=mask)
+    assert torch.equal(first["image"], replayed["image"])
+    assert torch.equal(first["mask"], replayed["mask"])
 
 
 def test_eval_transforms_are_deterministic():

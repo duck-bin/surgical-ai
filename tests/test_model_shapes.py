@@ -117,6 +117,75 @@ def test_sam2_lora_param_groups_split():
     assert all(len(g["params"]) > 0 for g in groups)
 
 
+def test_temporal_head_zero_init_residual_and_shape():
+    """ConvGRU head: (B,T,C,h,w) -> (B,C,h,w); zero-init -> no-op correction."""
+    from src.models.temporal import TemporalRefinementHead
+
+    head = TemporalRefinementHead(num_classes=6, hidden_channels=8)
+    sequence = torch.randn(2, 3, 6, 16, 16)
+    correction = head(sequence)
+    assert tuple(correction.shape) == (2, 6, 16, 16)
+    # The output projection is zero-initialised, so an untrained head is a no-op.
+    assert torch.allclose(correction, torch.zeros_like(correction))
+
+
+def test_temporal_head_learns_nonzero_after_step():
+    """A single optimizer step makes the residual correction non-zero."""
+    from src.models.temporal import TemporalRefinementHead
+
+    head = TemporalRefinementHead(num_classes=4, hidden_channels=8)
+    sequence = torch.randn(1, 3, 4, 8, 8)
+    optimizer = torch.optim.SGD(head.parameters(), lr=1.0)
+    loss = (head(sequence) - 1.0).pow(2).mean()  # push correction toward 1
+    loss.backward()
+    optimizer.step()
+    assert not torch.allclose(head(sequence), torch.zeros(1, 4, 8, 8))
+
+
+def test_temporal_sam2_forward_shape():
+    """Clip (B,T,3,H,W) -> (B,6,H,W) target-frame logits, with gradient flow."""
+    from src.models.temporal import TemporalSAM2LoRASegmenter
+
+    model = TemporalSAM2LoRASegmenter(num_classes=6, pretrained=False, window=2)
+    out = model(torch.randn(1, 2, 3, 128, 128))
+    assert tuple(out.shape) == (1, 6, 128, 128)
+
+    out.sum().backward()
+    temporal_params = list(model.temporal.parameters())
+    assert any(p.grad is not None for p in temporal_params)
+
+
+def test_temporal_sam2_accepts_single_frame():
+    """A bare (B,3,H,W) frame is treated as a T=1 clip (drop-in compatibility)."""
+    from src.models.temporal import TemporalSAM2LoRASegmenter
+
+    model = TemporalSAM2LoRASegmenter(num_classes=6, pretrained=False, window=3)
+    out = model(torch.randn(1, 3, 128, 128))
+    assert tuple(out.shape) == (1, 6, 128, 128)
+
+
+def test_temporal_sam2_param_groups_split():
+    """param_groups yields encoder-LoRA + mask-decoder + temporal groups."""
+    from src.models.temporal import TemporalSAM2LoRASegmenter
+
+    model = TemporalSAM2LoRASegmenter(num_classes=6, pretrained=False, window=2,
+                                      temporal_lr=5e-4)
+    groups = model.param_groups(lr_encoder=1e-4, lr_decoder=1e-3)
+    assert len(groups) == 3
+    assert groups[0]["lr"] == 1e-4 and groups[1]["lr"] == 1e-3
+    assert groups[2]["lr"] == 5e-4  # temporal head's own LR group
+    assert all(len(g["params"]) > 0 for g in groups)
+
+
+def test_temporal_sam2_default_temporal_lr_is_decoder_lr():
+    """When temporal_lr is unset, the temporal group uses the decoder LR."""
+    from src.models.temporal import TemporalSAM2LoRASegmenter
+
+    model = TemporalSAM2LoRASegmenter(num_classes=6, pretrained=False, window=2)
+    groups = model.param_groups(lr_encoder=1e-4, lr_decoder=1e-3)
+    assert groups[2]["lr"] == 1e-3
+
+
 def test_cvs_classifier_forward_shape():
     """(B, 9, 224, 224) input -> (B, 3) criterion logits, with gradient flow."""
     from src.models.cvs_classifier import CVSClassifier

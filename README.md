@@ -90,6 +90,9 @@ bash scripts/prepare_endoscapes.sh
 #    Checkpoints are written to outputs/<model>/best.ckpt; train_cvs and the
 #    benchmark runner read them automatically.
 python -m src.train.train_segmentation model=sam2_lora   # or model=unet_baseline
+# Temporal variant: a ConvGRU head over a window of T=3 consecutive frames,
+# targeting cystic_duct recall + frame-to-frame consistency (drop-in output).
+python -m src.train.train_segmentation model=sam2_temporal
 python -m src.train.train_cvs
 
 # 4. Benchmark + demo

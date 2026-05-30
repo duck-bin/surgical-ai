@@ -1,0 +1,32 @@
+# SAM2 + LoRA with a lightweight temporal head (video-aware variant).
+#
+# Keeps the per-frame SAM2 encoder (LoRA) + mask decoder of sam2_lora, and adds
+# a small ConvGRU over a window of T consecutive frames' mask-decoder outputs to
+# refine the *target* (last) frame. A zero-init residual means it starts equal
+# to the frame-level baseline and learns only the temporal correction. Output
+# stays (B, num_classes, H, W) for the target frame -> drop-in for
+# SegmentationModule. Toggle with: model=sam2_temporal
+#
+# Targets cystic_duct recall + frame-to-frame consistency (thin, flickering
+# structures). Note: each step runs the SAM2 encoder T times, so it is ~T x the
+# per-step cost of sam2_lora -- keep low_memory=true on a T4.
+name: sam2_temporal
+loader: transformers                              # transformers.Sam2Model (per frame)
+base_checkpoint: facebook/sam2-hiera-base-plus    # ~80M params
+
+num_classes: 6
+sam2_image_size: 1024     # SAM2 Hiera backbone input resolution
+
+# LoRA on the Hiera vision encoder attention; mask decoder fully fine-tuned.
+# (Identical to sam2_lora -- the encoder path is unchanged.)
+lora:
+  rank: 8
+  alpha: 16
+  dropout: 0.05
+  target_modules: [qkv]
+
+# Temporal head.
+window: 3                 # T consecutive frames per clip; the last is the target
+temporal:
+  hidden: 64              # ConvGRU hidden channels
+  lr: 1.0e-3              # own optimizer group (defaults to decoder LR if unset)
