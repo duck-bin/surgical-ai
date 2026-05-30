@@ -19,7 +19,11 @@ from omegaconf import DictConfig
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from torch.utils.data import DataLoader
 
-from src.data.cholecseg8k import NUM_CLASSES, CholecSeg8kDataset
+from src.data.cholecseg8k import (
+    NUM_CLASSES,
+    CholecSeg8kDataset,
+    CholecSeg8kWindowDataset,
+)
 from src.data.class_balance import (
     class_loss_weights,
     compute_pixel_frequencies,
@@ -27,6 +31,7 @@ from src.data.class_balance import (
 )
 from src.data.transforms import build_eval_transforms, build_train_transforms
 from src.models.sam2_lora import SAM2LoRASegmenter
+from src.models.temporal import TemporalSAM2LoRASegmenter
 from src.models.unet_baseline import UNetBaseline
 from src.train.lightning_modules import SegmentationModule
 from src.utils.seeds import seed_everything
@@ -57,6 +62,20 @@ def build_model(model_cfg: DictConfig, pretrained: bool = True):
             sam2_image_size=model_cfg.sam2_image_size,
             pretrained=pretrained,
         )
+    if name == "sam2_temporal":
+        return TemporalSAM2LoRASegmenter(
+            base_checkpoint=model_cfg.base_checkpoint,
+            num_classes=model_cfg.num_classes,
+            lora_rank=model_cfg.lora.rank,
+            lora_alpha=model_cfg.lora.alpha,
+            lora_dropout=model_cfg.lora.dropout,
+            lora_target_modules=list(model_cfg.lora.target_modules),
+            sam2_image_size=model_cfg.sam2_image_size,
+            pretrained=pretrained,
+            window=model_cfg.window,
+            temporal_hidden=model_cfg.temporal.hidden,
+            temporal_lr=model_cfg.temporal.get("lr", None),
+        )
     raise ValueError(f"Unknown model '{name}'.")
 
 
@@ -86,23 +105,38 @@ def _resolve_precision(requested: str) -> str:
 def main(cfg: DictConfig) -> None:
     seed_everything(cfg.seed, cfg.deterministic)
 
-    train_tf = build_train_transforms(cfg.data.image_size)
-    eval_tf = build_eval_transforms(cfg.data.image_size)
     common = dict(
         hf_repo=cfg.data.hf_repo,
         cache_dir=cfg.data.cache_dir,
         image_size=cfg.data.image_size,
         split_seed=cfg.data.split.seed,
     )
-    train_ds = CholecSeg8kDataset(split="train", transform=train_tf, **common)
-    val_ds = CholecSeg8kDataset(split="val", transform=eval_tf, **common)
-    test_ds = CholecSeg8kDataset(split="test", transform=eval_tf, **common)
+    # The temporal model consumes clips of `window` consecutive frames; its
+    # train augmentation must be replay-consistent across the clip (ConvGRU
+    # needs spatial correspondence), so the train transform is a ReplayCompose.
+    window = cfg.model.get("window", None)
+    is_temporal = window is not None
+    eval_tf = build_eval_transforms(cfg.data.image_size)
+    train_tf = build_train_transforms(cfg.data.image_size, replay=is_temporal)
+    if is_temporal:
+        train_ds = CholecSeg8kWindowDataset(split="train", window=window,
+                                            transform=train_tf, **common)
+        val_ds = CholecSeg8kWindowDataset(split="val", window=window,
+                                          transform=eval_tf, **common)
+        test_ds = CholecSeg8kWindowDataset(split="test", window=window,
+                                           transform=eval_tf, **common)
+    else:
+        train_ds = CholecSeg8kDataset(split="train", transform=train_tf, **common)
+        val_ds = CholecSeg8kDataset(split="val", transform=eval_tf, **common)
+        test_ds = CholecSeg8kDataset(split="test", transform=eval_tf, **common)
 
     # Per-class loss weights and the sampler are derived from the train split
     # under the deterministic eval transform (same frame order as train_ds).
     # Both require full passes over the train set, so skip them when disabled
     # (e.g. a smoke test with sampler=null loss.class_weighting=none).
-    need_sampler = cfg.sampler == "weighted_random"
+    # The weighted sampler indexes individual frames, so it does not apply to
+    # the temporal path (which indexes clips); class loss weighting still does.
+    need_sampler = cfg.sampler == "weighted_random" and not is_temporal
     need_class_weights = str(cfg.loss.class_weighting).lower() not in (
         "none", "null", "off", "false", "")
     class_weights = None

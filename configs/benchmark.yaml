@@ -23,3 +23,6 @@ models:
   - label: SAM2 + LoRA (ours)
     model_config: sam2_lora
     checkpoint: outputs/sam2_lora/best.ckpt
+  - label: SAM2 + LoRA + temporal (ours)
+    model_config: sam2_temporal
+    checkpoint: outputs/sam2_temporal/best.ckpt
