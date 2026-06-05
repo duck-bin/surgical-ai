@@ -20,6 +20,7 @@ from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from torch.utils.data import DataLoader
 
 from src.data.cholecseg8k import (
+    CLASS_NAMES,
     NUM_CLASSES,
     CholecSeg8kDataset,
     CholecSeg8kWindowDataset,
@@ -161,6 +162,7 @@ def main(cfg: DictConfig) -> None:
         build_model(cfg.model),
         num_classes=cfg.model.num_classes,
         class_weights=class_weights,
+        class_names=CLASS_NAMES,
         lr_encoder=cfg.optimizer.lr_encoder,
         lr_decoder=cfg.optimizer.lr_decoder,
         weight_decay=cfg.optimizer.weight_decay,

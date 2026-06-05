@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
@@ -45,7 +46,8 @@ class SegmentationModule(pl.LightningModule):
     """
 
     def __init__(self, model, *, num_classes: int = 6, class_weights=None,
-                 lr_encoder: float = 1e-4, lr_decoder: float = 1e-3,
+                 class_names=None, lr_encoder: float = 1e-4,
+                 lr_decoder: float = 1e-3,
                  weight_decay: float = 0.01, dice_weight: float = 1.0,
                  focal_weight: float = 1.0, focal_gamma: float = 2.0,
                  max_epochs: int = 100, warmup_epochs: int = 5):
@@ -53,6 +55,7 @@ class SegmentationModule(pl.LightningModule):
         self.save_hyperparameters(ignore=["model", "class_weights"])
         self.model = model
         self.num_classes = num_classes
+        self.class_names = tuple(class_names) if class_names is not None else None
         self.lr_encoder = lr_encoder
         self.lr_decoder = lr_decoder
         self.weight_decay = weight_decay
@@ -62,6 +65,10 @@ class SegmentationModule(pl.LightningModule):
         self.warmup_epochs = warmup_epochs
         self.focal = FocalLoss(gamma=focal_gamma, class_weights=class_weights)
         self.dice = DiceLoss()
+        # Per-class Dice is aggregated at epoch end (not per-step): a class
+        # absent from a batch yields NaN, which would poison a running mean and
+        # break the monitored ``val_<class>_dice`` checkpoint/early-stop metric.
+        self._dice_buffer: dict[str, list] = {"val": [], "test": []}
 
     def forward(self, x):
         return self.model(x)
@@ -74,12 +81,15 @@ class SegmentationModule(pl.LightningModule):
 
         preds = logits.argmax(dim=1)
         _, miou = iou_score(preds, target, self.num_classes)
-        _, mdice = dice_score(preds, target, self.num_classes)
+        per_class_dice, mdice = dice_score(preds, target, self.num_classes)
 
         batch_size = batch["image"].shape[0]
         self.log(f"{stage}_loss", loss, prog_bar=True, batch_size=batch_size)
         self.log(f"{stage}_miou", miou, prog_bar=True, batch_size=batch_size)
         self.log(f"{stage}_mdice", mdice, batch_size=batch_size)
+        # Stash per-class Dice for epoch-end aggregation (val/test only).
+        if stage in self._dice_buffer:
+            self._dice_buffer[stage].append(per_class_dice)
         return loss
 
     def training_step(self, batch, batch_idx):
@@ -90,6 +100,35 @@ class SegmentationModule(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         return self._shared_step(batch, "test")
+
+    def on_validation_epoch_end(self):
+        self._log_per_class_dice("val")
+
+    def on_test_epoch_end(self):
+        self._log_per_class_dice("test")
+
+    def _log_per_class_dice(self, stage: str):
+        """Log epoch-level per-class Dice (NaN-ignoring mean over batches).
+
+        Emits ``{stage}_{name}_dice`` for every class, so ``cystic_duct`` Dice
+        becomes available for model selection (configs/segmentation.yaml monitors
+        ``val_cystic_duct_dice``) and the rest are visible for post-hoc analysis.
+        A class never present in the split logs 0.0 (rather than NaN) so the
+        monitored metric stays well-defined.
+        """
+        buffer = self._dice_buffer.get(stage, [])
+        if not buffer:
+            return
+        stacked = np.stack(buffer, axis=0)  # (n_batches, num_classes)
+        self._dice_buffer[stage] = []
+        for c in range(self.num_classes):
+            column = stacked[:, c]
+            column = column[~np.isnan(column)]
+            value = float(column.mean()) if column.size else 0.0
+            name = self.class_names[c] if self.class_names else f"class{c}"
+            self.log(f"{stage}_{name}_dice", value,
+                     prog_bar=(name == "cystic_duct"))
+
 
     def configure_optimizers(self):
         groups = self.model.param_groups(self.lr_encoder, self.lr_decoder)
