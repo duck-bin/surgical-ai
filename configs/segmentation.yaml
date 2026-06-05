@@ -33,7 +33,11 @@ loss:
 sampler: weighted_random           # WeightedRandomSampler on inverse class freq
 
 early_stopping:
-  monitor: val_miou
+  # Selection target is the cystic_duct (the CVS-critical, thin/sparse class):
+  # the best checkpoint is the epoch with the highest val cystic_duct Dice, not
+  # the highest mean IoU (which is dominated by the large background/organ
+  # classes). mIoU and every per-class Dice are still logged for analysis.
+  monitor: val_cystic_duct_dice
   mode: max
   patience: 10
 

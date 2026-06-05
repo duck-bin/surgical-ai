@@ -93,6 +93,55 @@ def test_segmentation_module_smoke():
     trainer.fit(module, loader, loader)
 
 
+def test_segmentation_module_logs_finite_cystic_duct_dice_when_absent():
+    """val_cystic_duct_dice is logged and finite even when the class is absent.
+
+    Per-class Dice is NaN for a class missing from a batch; if that NaN reached
+    the logged ``val_cystic_duct_dice`` it would poison the epoch mean and break
+    the checkpoint/early-stop monitor. The masks here never contain cystic_duct
+    (index 3), so the metric must aggregate to a finite 0.0, not NaN.
+    """
+    import pytorch_lightning as pl
+    import torch.nn as nn
+    from torch.utils.data import DataLoader, Dataset
+
+    from src.data.cholecseg8k import CLASS_NAMES
+    from src.train.lightning_modules import SegmentationModule
+
+    class _Tiny(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.conv = nn.Conv2d(3, 6, kernel_size=1)
+
+        def forward(self, x):
+            return self.conv(x)
+
+        def param_groups(self, lr_encoder, lr_decoder):
+            return [{"params": list(self.parameters()), "lr": lr_decoder}]
+
+    class _NoCysticDuct(Dataset):
+        def __len__(self):
+            return 4
+
+        def __getitem__(self, index):
+            # Classes 0..2 only -> cystic_duct (3), cystic_artery (4), tool (5)
+            # never appear, so their per-class Dice is NaN every batch.
+            return {"image": torch.randn(3, 16, 16),
+                    "mask": torch.randint(0, 3, (16, 16))}
+
+    module = SegmentationModule(_Tiny(), num_classes=6, class_names=CLASS_NAMES,
+                                max_epochs=1, warmup_epochs=0)
+    loader = DataLoader(_NoCysticDuct(), batch_size=2)
+    trainer = pl.Trainer(max_epochs=1, limit_train_batches=1, limit_val_batches=2,
+                         num_sanity_val_steps=0, accelerator="cpu", logger=False,
+                         enable_checkpointing=False)
+    trainer.fit(module, loader, loader)
+
+    metric = trainer.callback_metrics["val_cystic_duct_dice"]
+    assert torch.isfinite(metric).all()
+    assert float(metric) == 0.0
+
+
 def test_sam2_lora_forward_shape():
     """(B, 3, 512, 512) input -> (B, 6, 512, 512) logits, with gradient flow."""
     from src.models.sam2_lora import SAM2LoRASegmenter
