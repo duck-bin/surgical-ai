@@ -196,6 +196,18 @@ def main(cfg: DictConfig) -> None:
             dirpath=checkpoint_dir,
             filename="best-epoch{epoch:02d}-cdd{val_cystic_duct_dice:.3f}",
             auto_insert_metric_name=False))
+    # wandb logger: disabled by default (offline-friendly). Set
+    # ``wandb.mode=online`` to stream live training curves to the wandb web UI;
+    # set ``wandb.mode=offline`` to log to disk only.
+    wandb_mode = str(cfg.wandb.get("mode", "disabled")).lower()
+    if wandb_mode in ("online", "offline"):
+        from pytorch_lightning.loggers import WandbLogger
+
+        logger = WandbLogger(project=cfg.wandb.project,
+                             name=cfg.model.name, mode=wandb_mode)
+    else:
+        logger = False
+
     trainer = pl.Trainer(
         max_epochs=cfg.epochs,
         precision=_resolve_precision(cfg.precision),
@@ -204,6 +216,7 @@ def main(cfg: DictConfig) -> None:
         limit_val_batches=cfg.limit_batches,
         limit_test_batches=cfg.limit_batches,
         callbacks=callbacks,
+        logger=logger,
         log_every_n_steps=10,
     )
     # Resume from the last checkpoint when a previous run was interrupted
