@@ -95,10 +95,55 @@ python -m src.train.train_segmentation model=sam2_lora   # or model=unet_baselin
 python -m src.train.train_segmentation model=sam2_temporal
 python -m src.train.train_cvs
 
-# 4. Benchmark + demo
+# 4. Benchmark + visualization + demo
 python -m src.eval.benchmark_runner    # -> results/benchmark_table.md
+# Visual comparison of the three trained models (input | GT | U-Net | SAM2 | temporal):
+#   open notebooks/07_results_visualization.ipynb  (reads outputs/*/best.ckpt)
 python -m app.gradio_demo              # interactive CVS assessment demo
 ```
+
+### Running on RunPod (A100, recommended for the full run)
+
+The repo defaults are wired for a single 24 GB A100 (or 16 GB T4 with
+`low_memory=true`). To reproduce on a RunPod A100 pod end-to-end:
+
+```bash
+# 1. Create the pod
+#    Template: "PyTorch 2.x" (CUDA 12.x)  GPU: A100 (80 GB or 40 GB both fine)
+#    Volume:   60 GB+ (CholecSeg8k ~3 GB + 3 checkpoints ~3-6 GB + scratch)
+#    Open the pod's Jupyter / Web Terminal.
+
+# 2. Clone + install (one-off, ~3 min)
+git clone https://github.com/duck-bin/surgical-ai.git && cd surgical-ai
+pip install -r requirements.txt
+
+# 3. Data (~3 GB, ~20-40 min on first run; cached afterwards)
+bash scripts/download_cholecseg8k.sh
+
+# 4. Train the three segmentation models (~6-8 h each on A100;
+#    low_memory=false lifts the per-device batch from 1 to 4)
+python -m src.train.train_segmentation model=unet_baseline \
+       low_memory=false num_workers=4
+python -m src.train.train_segmentation model=sam2_lora      \
+       low_memory=false num_workers=4
+python -m src.train.train_segmentation model=sam2_temporal  \
+       low_memory=false num_workers=4
+
+# 5. Comparison table + visualization
+python -m src.eval.benchmark_runner    # -> results/benchmark_table.md
+#    then open notebooks/07_results_visualization.ipynb in Jupyter
+
+# 6. (Optional) Stream training curves to wandb live (default mode=disabled)
+python -m src.train.train_segmentation model=sam2_temporal wandb.mode=online
+```
+
+**Tips**
+
+- Pod disconnects are safe — every run picks up the last checkpoint
+  automatically. Just re-run the same `train_segmentation` command.
+- If a model is too slow, drop to T4-style: `low_memory=true num_workers=2`.
+- To visualise on a different machine (e.g. Colab) instead of the pod, just
+  copy the `outputs/` folder over — notebook 07 reads from `outputs/<model>/best.ckpt`.
 
 The configs default to a 16 GB T4 (`low_memory: true` — per-device batch 1 with
 16x gradient accumulation); set `low_memory=false` on a larger GPU. Expected

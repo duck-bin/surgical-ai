@@ -174,6 +174,12 @@ def main(cfg: DictConfig) -> None:
     )
 
     checkpoint_dir = f"outputs/{cfg.model.name}"
+    # Two checkpoint callbacks:
+    #  - ``best.ckpt`` always holds the absolute top-1 by the monitor (keeps
+    #    benchmark_runner's hardcoded path working).
+    #  - ``best-epoch...ckpt`` keeps the top-K (default 3) for post-hoc
+    #    selection on a noisy metric -- cf. configs/segmentation.yaml.
+    save_top_k = int(cfg.early_stopping.get("save_top_k", 1))
     callbacks = [
         EarlyStopping(monitor=cfg.early_stopping.monitor,
                       mode=cfg.early_stopping.mode,
@@ -183,6 +189,13 @@ def main(cfg: DictConfig) -> None:
                         dirpath=checkpoint_dir, filename="best",
                         save_last=True),
     ]
+    if save_top_k > 1:
+        callbacks.append(ModelCheckpoint(
+            monitor=cfg.early_stopping.monitor,
+            mode=cfg.early_stopping.mode, save_top_k=save_top_k,
+            dirpath=checkpoint_dir,
+            filename="best-epoch{epoch:02d}-cdd{val_cystic_duct_dice:.3f}",
+            auto_insert_metric_name=False))
     trainer = pl.Trainer(
         max_epochs=cfg.epochs,
         precision=_resolve_precision(cfg.precision),
