@@ -145,6 +145,26 @@ python -m src.train.train_segmentation model=sam2_temporal wandb.mode=online
 - To visualise on a different machine (e.g. Colab) instead of the pod, just
   copy the `outputs/` folder over — notebook 07 reads from `outputs/<model>/best.ckpt`.
 
+### Live training curves with Weights & Biases (optional)
+
+Training logs `loss / val_miou / val_<class>_dice / val_cystic_duct_dice` every
+epoch. By default these go to local files only (`wandb.mode=disabled`). To
+stream them to the [wandb](https://wandb.ai) web UI so you can watch the run
+from anywhere (phone, another laptop) without staying connected to the pod:
+
+```bash
+# Once per machine: install + paste your wandb API key (free signup, ~30 s)
+pip install wandb && wandb login
+
+# Add wandb.mode=online to any training command:
+python -m src.train.train_segmentation model=sam2_temporal wandb.mode=online
+```
+
+This is **highly recommended for long runs on RunPod** — you can see whether
+`val_cystic_duct_dice` is actually climbing without paying for the pod just to
+watch a terminal. `wandb.project=surgical-cvs-ai` is preset; override it with
+`wandb.project=<name>` if you want a different workspace.
+
 The configs default to a 16 GB T4 (`low_memory: true` — per-device batch 1 with
 16x gradient accumulation); set `low_memory=false` on a larger GPU. Expected
 runtime and cost (RunPod A100, see Step-1 plan for details):
