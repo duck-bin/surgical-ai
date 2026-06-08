@@ -174,12 +174,14 @@ def main(cfg: DictConfig) -> None:
     )
 
     checkpoint_dir = f"outputs/{cfg.model.name}"
-    # Two checkpoint callbacks:
-    #  - ``best.ckpt`` always holds the absolute top-1 by the monitor (keeps
-    #    benchmark_runner's hardcoded path working).
-    #  - ``best-epoch...ckpt`` keeps the top-K (default 3) for post-hoc
-    #    selection on a noisy metric -- cf. configs/segmentation.yaml.
-    save_top_k = int(cfg.early_stopping.get("save_top_k", 1))
+    # Single ModelCheckpoint with save_top_k=1: ``best.ckpt`` is unambiguously
+    # the top-1 by the monitor (the path benchmark_runner loads), and
+    # ``last.ckpt`` (save_last) supports resume after an interruption.
+    # NOTE: an earlier design added a SECOND ModelCheckpoint for top-k, but
+    # Lightning rejects two stateful ModelCheckpoints with the same
+    # monitor/mode ("more than one stateful callback ... identical state_key").
+    # With save_top_k>1 on a fixed filename, ``best.ckpt`` is also no longer
+    # guaranteed to be rank-1, so top-1 is the correct, benchmark-safe choice.
     callbacks = [
         EarlyStopping(monitor=cfg.early_stopping.monitor,
                       mode=cfg.early_stopping.mode,
@@ -189,13 +191,6 @@ def main(cfg: DictConfig) -> None:
                         dirpath=checkpoint_dir, filename="best",
                         save_last=True),
     ]
-    if save_top_k > 1:
-        callbacks.append(ModelCheckpoint(
-            monitor=cfg.early_stopping.monitor,
-            mode=cfg.early_stopping.mode, save_top_k=save_top_k,
-            dirpath=checkpoint_dir,
-            filename="best-epoch{epoch:02d}-cdd{val_cystic_duct_dice:.3f}",
-            auto_insert_metric_name=False))
     # wandb logger: disabled by default (offline-friendly). Set
     # ``wandb.mode=online`` to stream live training curves to the wandb web UI;
     # set ``wandb.mode=offline`` to log to disk only.
