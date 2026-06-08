@@ -40,11 +40,6 @@ early_stopping:
   monitor: val_cystic_duct_dice
   mode: max
   patience: 10
-  # cystic_duct Dice is noisy (rare class + val=400 frames), so a single best
-  # epoch is fragile. Keep the top 3 by the monitor so post-hoc selection can
-  # cross-check on mIoU / per-class Dice. The benchmark still auto-loads
-  # ``best.ckpt`` (= top-1).
-  save_top_k: 3
 
 wandb:
   project: surgical-cvs-ai
