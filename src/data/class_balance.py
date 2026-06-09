@@ -11,6 +11,8 @@ the *eval* transform (deterministic) rather than the randomized train pipeline.
 """
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import torch
 from torch.utils.data import WeightedRandomSampler
@@ -81,3 +83,74 @@ def make_weighted_sampler(dataset, num_classes: int = NUM_CLASSES,
         num_samples=len(dataset),
         replacement=True,
     )
+
+
+def compute_class_stats(dataset, num_classes: int = NUM_CLASSES,
+                        mask_key: str = "mask"):
+    """Per-class frequencies AND per-frame sampler weights in a *single* pass.
+
+    Returns ``(frequencies, sample_weights)``:
+        frequencies   - float64 (num_classes,), normalized pixel frequencies.
+        sample_weights - float64 (len(dataset),), each frame weighted by the
+            inverse-sqrt frequency of the rarest class it contains (so frames
+            with rare classes are oversampled).
+
+    This fuses :func:`compute_pixel_frequencies` and the weighting loop of
+    :func:`make_weighted_sampler` so the dataset (whose items are decoded images)
+    is iterated once instead of twice -- the expensive part on large datasets.
+    """
+    counts = np.zeros(num_classes, dtype=np.int64)
+    present_per_frame: list[np.ndarray] = []
+    for i in range(len(dataset)):
+        mask = _mask_of(dataset[i], mask_key).ravel().astype(np.int64)
+        binc = np.bincount(mask, minlength=num_classes)[:num_classes]
+        counts += binc
+        present_per_frame.append(np.nonzero(binc)[0])
+
+    total = int(counts.sum())
+    frequencies = counts / total if total > 0 else counts.astype(np.float64)
+    with np.errstate(divide="ignore"):
+        inv = 1.0 / np.sqrt(np.where(frequencies > 0, frequencies, np.inf))
+
+    sample_weights = np.empty(len(dataset), dtype=np.float64)
+    for i, present in enumerate(present_per_frame):
+        present = present[(present >= 0) & (present < num_classes)]
+        sample_weights[i] = float(inv[present].max()) if present.size else 1.0
+    return frequencies, sample_weights
+
+
+def compute_or_load_class_stats(dataset, num_classes: int = NUM_CLASSES,
+                                cache_path: str | None = None,
+                                mask_key: str = "mask"):
+    """:func:`compute_class_stats` with an on-disk ``.npz`` cache.
+
+    The full pass over the train set (decoding thousands of masks) takes many
+    minutes; this caches the result so re-runs and subsequent models start
+    instantly. The cache is reused only when its ``sample_weights`` length and
+    ``frequencies`` size match the current dataset -- the caller is responsible
+    for keying ``cache_path`` on anything else that changes the split (e.g. the
+    split seed).
+    """
+    if cache_path and os.path.exists(cache_path):
+        try:
+            cached = np.load(cache_path)
+            freqs, weights = cached["frequencies"], cached["sample_weights"]
+            if weights.shape[0] == len(dataset) and freqs.shape[0] == num_classes:
+                return freqs, weights
+        except Exception:
+            pass  # corrupt/stale cache -> recompute below
+
+    frequencies, sample_weights = compute_class_stats(dataset, num_classes, mask_key)
+    if cache_path:
+        directory = os.path.dirname(cache_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        np.savez(cache_path, frequencies=frequencies, sample_weights=sample_weights)
+    return frequencies, sample_weights
+
+
+def sampler_from_weights(sample_weights) -> WeightedRandomSampler:
+    """Build a WeightedRandomSampler from precomputed per-frame weights."""
+    weights = torch.as_tensor(np.asarray(sample_weights), dtype=torch.double)
+    return WeightedRandomSampler(weights=weights, num_samples=weights.numel(),
+                                 replacement=True)
