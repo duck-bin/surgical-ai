@@ -27,8 +27,8 @@ from src.data.cholecseg8k import (
 )
 from src.data.class_balance import (
     class_loss_weights,
-    compute_pixel_frequencies,
-    make_weighted_sampler,
+    compute_or_load_class_stats,
+    sampler_from_weights,
 )
 from src.data.transforms import build_eval_transforms, build_train_transforms
 from src.models.sam2_lora import SAM2LoRASegmenter
@@ -141,14 +141,21 @@ def main(cfg: DictConfig) -> None:
     need_class_weights = str(cfg.loss.class_weighting).lower() not in (
         "none", "null", "off", "false", "")
     class_weights = None
+    sample_weights = None
     if need_class_weights or need_sampler:
         stats_ds = CholecSeg8kDataset(split="train", transform=eval_tf, **common)
+        # One pass computes BOTH frequencies and sampler weights, cached to disk
+        # keyed by split seed -- re-runs and later models then start instantly
+        # instead of repeating the multi-minute decode of the whole train set.
+        cache_path = os.path.join(
+            cfg.data.cache_dir, f"class_stats_seed{cfg.data.split.seed}.npz")
+        frequencies, sample_weights = compute_or_load_class_stats(
+            stats_ds, NUM_CLASSES, cache_path=cache_path)
         if need_class_weights:
-            _, frequencies = compute_pixel_frequencies(stats_ds, NUM_CLASSES)
             class_weights = class_loss_weights(frequencies)
 
     per_device_bs, accumulate = _batch_and_accumulation(cfg.batch_size, cfg.low_memory)
-    sampler = make_weighted_sampler(stats_ds) if need_sampler else None
+    sampler = sampler_from_weights(sample_weights) if need_sampler else None
     train_loader = DataLoader(
         train_ds, batch_size=per_device_bs, sampler=sampler,
         shuffle=sampler is None, num_workers=cfg.num_workers, pin_memory=True, drop_last=True,
