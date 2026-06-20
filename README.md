@@ -43,6 +43,15 @@ encoder's attention; the small mask decoder is fully fine-tuned and repurposed
 to emit a prompt-free dense 6-class logit map (`num_multimask_outputs = 6`, no
 point/box prompts). Baseline: EfficientNet-B4 U-Net.
 
+**Temporal variant** (`model=sam2_temporal`). Adds a lightweight ConvGRU head
+over a window of `T = 3` consecutive frames' native mask-decoder outputs and a
+zero-init residual: at initialisation it reproduces the frame-level model
+exactly, and training only learns the temporal correction. Output stays
+`(B, num_classes, H, W)` for the target (last) frame — a drop-in for the shared
+`SegmentationModule`. Aimed at thin, flickering structures (`cystic_duct`); see
+`src/models/temporal.py` for the rationale on why the fusion is at decoder
+outputs rather than encoder embeddings.
+
 **CVS classification.** ViT-Small backbone consuming a 9-channel input
 (6-channel segmentation mask + RGB frame), with three independent binary heads
 for Strasberg's criteria.
@@ -54,18 +63,46 @@ control and deterministic algorithms. See `configs/` for exact hyperparameters.
 
 ## 3. Results
 
-All numbers are produced by actual experiments — do **not** edit cells to
+Numbers are produced by actual experiments — do **not** edit cells to
 non-`TBD` values until the corresponding run has completed.
+
+### CholecSeg8k segmentation (test split, 1834 frames)
 
 | Method | mIoU | Cystic Duct Dice | CVS mAP |
 |---|---|---|---|
 | U-Net (ours) | TBD | TBD | TBD |
-| SAM2 zero-shot | TBD | TBD | TBD |
 | SAM2 + LoRA (ours) | TBD | TBD | TBD |
+| **SAM2 + LoRA + temporal (ours)** | **0.703 (0.696–0.709)** | **0.000 (0.000–0.000)** | TBD |
+| SAM2 zero-shot | TBD | TBD | TBD |
 | DeepCVS (Mascagni 2022, reported) | — | — | 71.9 |
 | LG-CVS (Murali 2023, reported) | — | — | 80.6 |
 
-Qualitative examples: _TBD (added in Step 9)._
+Per-class Dice (temporal model, only model trained so far): background 0.945,
+liver 0.849, gallbladder 0.606, **cystic_duct 0.000**, tool 0.805. The
+`cystic_artery` class has no CholecSeg8k labels; it will be learned from
+Endoscapes2023.
+
+**Why `cystic_duct = 0`.** Selection metric was `val_cystic_duct_dice`
+(monitor, mode=max, patience=10). On a 0.031%-prevalence class the model needs
+30+ epochs before that metric leaves zero, but early stopping interpreted
+"10 epochs at 0" as no improvement and cut training at epoch 11/99. Frame-level
+visualization (notebook 07) shows the trained model already learned the large
+classes (liver/gallbladder/tool match GT well); the duct simply did not get
+enough time. Open issue, to be addressed in the next training run.
+
+Qualitative examples: see `notebooks/07_results_visualization.ipynb` (loads
+the trained checkpoints from HuggingFace and renders
+`[input | GT | <each model>]` side by side).
+
+### Trained checkpoints (HuggingFace)
+
+The first full run's checkpoints, benchmark table, train log and run notes are
+stored at
+**[`duckbin/surgical-sam2-temporal`](https://huggingface.co/duckbin/surgical-sam2-temporal)**
+(private). Download with `hf download duckbin/surgical-sam2-temporal
+sam2_temporal_results.zip --repo-type=model && unzip
+sam2_temporal_results.zip` to restore `outputs/sam2_temporal/best.ckpt` and
+`results/benchmark_table.md`.
 
 ## 4. Reproducing
 
@@ -175,14 +212,64 @@ runtime and cost (RunPod A100, see Step-1 plan for details):
 | Endoscapes CVS classifier | ~3–4 h | ~$5–8 |
 | **Full reproduction** | — | **< $50** |
 
+### Implementation progress (state of the repo)
+
+What is wired and verified end-to-end:
+
+- **Segmentation training** for `unet_baseline`, `sam2_lora`, `sam2_temporal`
+  (Lightning + Hydra, bf16 mixed precision, AdamW + cosine + 5-epoch warmup,
+  resume from `outputs/<model>/last.ckpt`).
+- **Class-balance pipeline** with inverse-sqrt-frequency loss weights and a
+  WeightedRandomSampler over the train split. The expensive per-frame pass is
+  computed once and cached to
+  `<data.cache_dir>/class_stats_seed<seed>.npz`, so re-runs and subsequent
+  models start in seconds instead of re-decoding the full train set.
+- **Video-level split + sliding windows.** `CholecSeg8kWindowDataset` builds
+  contiguous T-frame windows grouped by video, never crossing a video or
+  train/val/test boundary; replay-consistent augmentation across the clip via
+  `albumentations.ReplayCompose`.
+- **Per-class metrics + checkpoint selection.** `val_<class>_dice` is logged
+  every epoch (NaN-ignoring aggregation so rare classes don't poison the
+  monitor), with `val_cystic_duct_dice` as the default selection metric.
+- **wandb logger** is wired through `wandb.mode=online/offline/disabled`; the
+  run is named after the model so the three models can be overlaid in one
+  workspace.
+- **Benchmark + visualization.** `benchmark_runner` evaluates each available
+  checkpoint on the CholecSeg8k test split (1834 frames or 1834 windows for the
+  temporal model) and writes `results/benchmark_table.md` with 95% bootstrap
+  CIs. `notebooks/07_results_visualization.ipynb` pulls checkpoints from
+  HuggingFace and renders `[input | GT | <each available model>]` side by side
+  — it auto-detects which checkpoints are present, so it works with one model
+  today and grows with the others.
+- **Smoke tests** (CPU CI + a tiny notebook 06 run) keep the temporal path,
+  Lightning module, and window dataset honest end-to-end.
+
+What is **not** done yet (so the results table is what it is):
+
+- Frame-level baselines (`unet_baseline`, `sam2_lora`) at full schedule —
+  needed for a fair comparison.
+- CVS classifier training (Endoscapes2023 — manual PhysioNet download required).
+- Lifting `cystic_duct` Dice off zero. The selection-metric / early-stop
+  interaction needs to be addressed first; see Results and Limitations.
+
 ## 5. Limitations
 
 - Single segmentation dataset (CholecSeg8k) for pretraining.
-- No temporal modeling in v1 — frame-level predictions only.
+- Temporal modeling (`sam2_temporal`) is implemented and trained; the
+  frame-level baselines (`unet_baseline`, `sam2_lora`) have not yet been
+  trained to completion, so a fair frame-vs-temporal comparison is still
+  pending.
 - Ground truth is the public dataset annotations; not independently
-  surgeon-validated by the author.
+  surgeon-validated by the author. Frame-level inspection of the trained model
+  (notebook 07) suggests `cystic_duct` labels in CholecSeg8k are sparse and
+  inconsistent — some frames show a clearly visible duct in the input that is
+  not labelled in the ground-truth mask.
 - `cystic_artery` is not labeled in CholecSeg8k; it is learned only from
   Endoscapes2023 (see Clinical Note and `src/data/cholecseg8k.py`).
+- The first full `sam2_temporal` run early-stopped at epoch 11 because the
+  selection metric (`val_cystic_duct_dice`) was 0 for that whole window — see
+  Results above. The other anatomical classes were learnt well; the duct
+  itself did not get enough training time.
 
 ## 6. Clinical Note
 
