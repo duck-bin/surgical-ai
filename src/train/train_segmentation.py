@@ -187,6 +187,10 @@ def main(cfg: DictConfig) -> None:
         dice_weight=cfg.loss.dice_weight,
         focal_weight=cfg.loss.focal_weight,
         focal_gamma=cfg.loss.focal_gamma,
+        region_loss=cfg.loss.get("region_loss", "dice"),
+        tversky_alpha=cfg.loss.get("tversky_alpha", 0.3),
+        tversky_beta=cfg.loss.get("tversky_beta", 0.7),
+        tversky_gamma=cfg.loss.get("tversky_gamma", 1.0),
         max_epochs=cfg.epochs,
         warmup_epochs=cfg.scheduler.warmup_epochs,
     )

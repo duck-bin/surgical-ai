@@ -23,6 +23,7 @@ from src.eval.metrics import (
 )
 from src.losses.dice import DiceLoss
 from src.losses.focal import FocalLoss
+from src.losses.tversky import TverskyLoss
 
 
 def _warmup_cosine(warmup_epochs: int, max_epochs: int):
@@ -50,6 +51,8 @@ class SegmentationModule(pl.LightningModule):
                  lr_decoder: float = 1e-3,
                  weight_decay: float = 0.01, dice_weight: float = 1.0,
                  focal_weight: float = 1.0, focal_gamma: float = 2.0,
+                 region_loss: str = "dice", tversky_alpha: float = 0.3,
+                 tversky_beta: float = 0.7, tversky_gamma: float = 1.0,
                  max_epochs: int = 100, warmup_epochs: int = 5):
         super().__init__()
         self.save_hyperparameters(ignore=["model", "class_weights"])
@@ -64,7 +67,16 @@ class SegmentationModule(pl.LightningModule):
         self.max_epochs = max_epochs
         self.warmup_epochs = warmup_epochs
         self.focal = FocalLoss(gamma=focal_gamma, class_weights=class_weights)
-        self.dice = DiceLoss()
+        # Region term: plain Dice, or Tversky / Focal-Tversky for small, thin
+        # classes (beta > alpha penalizes misses harder than false positives;
+        # gamma > 1 focuses on the still-poorly-segmented rare classes). The
+        # macro average already balances classes, so class_weights stays on the
+        # focal (pixel-level) term only and is not duplicated here.
+        if str(region_loss).lower() in ("tversky", "focal_tversky"):
+            self.region = TverskyLoss(alpha=tversky_alpha, beta=tversky_beta,
+                                      gamma=tversky_gamma)
+        else:
+            self.region = DiceLoss()
         # Per-class Dice is aggregated at epoch end (not per-step): a class
         # absent from a batch yields NaN, which would poison a running mean and
         # break the monitored ``val_<class>_dice`` checkpoint/early-stop metric.
@@ -77,7 +89,7 @@ class SegmentationModule(pl.LightningModule):
         logits = self(batch["image"])
         target = batch["mask"]
         loss = (self.focal_weight * self.focal(logits, target)
-                + self.dice_weight * self.dice(logits, target))
+                + self.dice_weight * self.region(logits, target))
 
         preds = logits.argmax(dim=1)
         _, miou = iou_score(preds, target, self.num_classes)

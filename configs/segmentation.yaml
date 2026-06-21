@@ -26,9 +26,17 @@ scheduler:
   warmup_epochs: 5
 
 loss:
-  dice_weight: 1.0
+  dice_weight: 1.0                 # weight on the region term (Dice or Tversky below)
   focal_weight: 1.0
   focal_gamma: 2.0
+  # Region term tuned for small, thin structures (cystic_duct/artery): Tversky
+  # with beta > alpha penalizes misses (false negatives) harder than false
+  # positives, and gamma > 1 (focal-Tversky) focuses on the still-poorly-
+  # segmented rare classes. Set region_loss=dice to recover plain Dice.
+  region_loss: focal_tversky       # dice | tversky | focal_tversky
+  tversky_alpha: 0.3               # false-positive weight
+  tversky_beta: 0.7                # false-negative weight (recall on thin classes)
+  tversky_gamma: 1.333             # focal-Tversky focusing (1.0 = plain Tversky)
   class_weighting: inv_sqrt_freq   # inverse sqrt frequency, clipped to class_weight_clip
   # Upper clip raised from 10 -> 30 so the ~0.03%-prevalence cystic_duct
   # (raw inv-sqrt weight ~57) actually gets a strong loss weight instead of
