@@ -82,13 +82,21 @@ liver 0.849, gallbladder 0.606, **cystic_duct 0.000**, tool 0.805. The
 `cystic_artery` class has no CholecSeg8k labels; it will be learned from
 Endoscapes2023.
 
-**Why `cystic_duct = 0`.** Selection metric was `val_cystic_duct_dice`
-(monitor, mode=max, patience=10). On a 0.031%-prevalence class the model needs
-30+ epochs before that metric leaves zero, but early stopping interpreted
-"10 epochs at 0" as no improvement and cut training at epoch 11/99. Frame-level
-visualization (notebook 07) shows the trained model already learned the large
-classes (liver/gallbladder/tool match GT well); the duct simply did not get
-enough time. Open issue, to be addressed in the next training run.
+**Why `cystic_duct = 0` (and what changed).** Three causes compounded on the
+first run: (1) early stopping monitored `val_cystic_duct_dice` (mode=max,
+patience=10), so on a 0.031%-prevalence class — which needs 30+ epochs before
+that metric leaves zero — it read "10 epochs at 0" as no improvement and cut
+training at epoch 11/99; (2) the WeightedRandomSampler that oversamples
+rare-class frames was *frame-indexed and therefore disabled for the temporal
+model*, so the only model trained so far saw the duct at its natural <0.1%
+prevalence; (3) the inverse-sqrt loss weight was clipped to 10, the same cap as
+the common classes. Frame-level visualization (notebook 07) confirms the large
+classes (liver/gallbladder/tool) were learnt well; the duct simply was barely
+seen and barely weighted. All three are now addressed in code — a clip-level
+sampler for the temporal path (`window_sample_weights`), `min_epochs=40` plus
+patience 25 so early stopping can't fire during the warmup, and a loss-weight
+clip raised to 30 — pending the next training run to confirm the duct leaves
+zero.
 
 Qualitative examples: see `notebooks/07_results_visualization.ipynb` (loads
 the trained checkpoints from HuggingFace and renders
@@ -249,8 +257,10 @@ What is **not** done yet (so the results table is what it is):
 - Frame-level baselines (`unet_baseline`, `sam2_lora`) at full schedule —
   needed for a fair comparison.
 - CVS classifier training (Endoscapes2023 — manual PhysioNet download required).
-- Lifting `cystic_duct` Dice off zero. The selection-metric / early-stop
-  interaction needs to be addressed first; see Results and Limitations.
+- Re-running `sam2_temporal` to lift `cystic_duct` Dice off zero. The three
+  root causes (early-stop on the rare-class metric, the sampler being disabled
+  for the temporal path, and the over-tight loss-weight clip) are fixed in code;
+  the confirming training run has not been done yet. See Results and Limitations.
 
 ## 5. Limitations
 
@@ -267,9 +277,11 @@ What is **not** done yet (so the results table is what it is):
 - `cystic_artery` is not labeled in CholecSeg8k; it is learned only from
   Endoscapes2023 (see Clinical Note and `src/data/cholecseg8k.py`).
 - The first full `sam2_temporal` run early-stopped at epoch 11 because the
-  selection metric (`val_cystic_duct_dice`) was 0 for that whole window — see
-  Results above. The other anatomical classes were learnt well; the duct
-  itself did not get enough training time.
+  selection metric (`val_cystic_duct_dice`) was 0 for that whole window, the
+  rare-class sampler was inactive on the temporal path, and the duct's loss
+  weight was capped low — see Results above. The other anatomical classes were
+  learnt well. These causes are now fixed in code but the corrected run is still
+  pending, so the headline duct Dice stays 0.000 until it completes.
 
 ## 6. Clinical Note
 

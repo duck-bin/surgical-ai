@@ -29,6 +29,7 @@ from src.data.class_balance import (
     class_loss_weights,
     compute_or_load_class_stats,
     sampler_from_weights,
+    window_sample_weights,
 )
 from src.data.transforms import build_eval_transforms, build_train_transforms
 from src.models.sam2_lora import SAM2LoRASegmenter
@@ -135,9 +136,11 @@ def main(cfg: DictConfig) -> None:
     # under the deterministic eval transform (same frame order as train_ds).
     # Both require full passes over the train set, so skip them when disabled
     # (e.g. a smoke test with sampler=null loss.class_weighting=none).
-    # The weighted sampler indexes individual frames, so it does not apply to
-    # the temporal path (which indexes clips); class loss weighting still does.
-    need_sampler = cfg.sampler == "weighted_random" and not is_temporal
+    # The frame-level sampler weights also drive the temporal path: clips are
+    # oversampled by their target frame's weight (see window_sample_weights),
+    # so the temporal model no longer sees rare classes only at natural
+    # prevalence -- the cause of its cystic_duct Dice never leaving zero.
+    need_sampler = cfg.sampler == "weighted_random"
     need_class_weights = str(cfg.loss.class_weighting).lower() not in (
         "none", "null", "off", "false", "")
     class_weights = None
@@ -152,10 +155,18 @@ def main(cfg: DictConfig) -> None:
         frequencies, sample_weights = compute_or_load_class_stats(
             stats_ds, NUM_CLASSES, cache_path=cache_path)
         if need_class_weights:
-            class_weights = class_loss_weights(frequencies)
+            clip = tuple(cfg.loss.get("class_weight_clip", (0.5, 10.0)))
+            class_weights = class_loss_weights(frequencies, clip=clip)
 
     per_device_bs, accumulate = _batch_and_accumulation(cfg.batch_size, cfg.low_memory)
-    sampler = sampler_from_weights(sample_weights) if need_sampler else None
+    if need_sampler:
+        # Map per-frame weights onto clips for the temporal model; frame-level
+        # models use the per-frame weights directly. Both index the same split.
+        sampler_weights = (window_sample_weights(train_ds._windows, sample_weights)
+                           if is_temporal else sample_weights)
+        sampler = sampler_from_weights(sampler_weights)
+    else:
+        sampler = None
     train_loader = DataLoader(
         train_ds, batch_size=per_device_bs, sampler=sampler,
         shuffle=sampler is None, num_workers=cfg.num_workers, pin_memory=True, drop_last=True,
@@ -212,6 +223,10 @@ def main(cfg: DictConfig) -> None:
 
     trainer = pl.Trainer(
         max_epochs=cfg.epochs,
+        # Floor on training length so early-stopping can't fire during the rare
+        # class's zero-Dice warmup (cystic_duct needs ~30+ epochs before its
+        # monitored metric leaves zero); the first run early-stopped at epoch 11.
+        min_epochs=cfg.get("min_epochs", 1),
         precision=_resolve_precision(cfg.precision),
         accumulate_grad_batches=accumulate,
         limit_train_batches=cfg.limit_batches,
