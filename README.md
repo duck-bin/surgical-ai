@@ -99,13 +99,20 @@ seen and barely weighted. All four are now addressed in code — a clip-level
 sampler for the temporal path (`window_sample_weights`), `min_epochs=40` plus
 patience 25 so early stopping can't fire during the warmup, a loss-weight clip
 raised to 30, and a region loss redesigned for thin structures (Focal-Tversky,
-`β=0.7 > α=0.3`, which penalizes *misses* harder than false positives) — pending
-the next training run to confirm the duct leaves zero. Before committing to that
+`β=0.7 > α=0.3`, which penalizes *misses* harder than false positives). A fifth,
+SOTA-derived lever attacks the root cause — rarity itself: **rare-class
+copy-paste** (Ghiasi et al., CVPR 2021; the augmentation behind SurgiSAM2's
++0.37 cystic_duct / +0.32 cystic_artery Dice gains) harvests duct patches and
+pastes them onto other frames, manufacturing rare-class instances and
+boundaries rather than only re-weighting the few that exist (opt-in:
+`copy_paste.enabled=true`). All are pending the next training run to confirm the
+duct leaves zero. Before committing to that
 multi-hour run, `notebooks/08_pretrain_validation.ipynb` checks in minutes
 whether the fixes can work: it inspects label sparsity, quantifies the sampler's
 duct-exposure boost, contrasts Dice vs Focal-Tversky on a synthetic thin
-structure, and overfits a single duct-containing batch to prove the
-model+loss+labels can represent the duct at all.
+structure, shows copy-paste raising duct prevalence before/after, and overfits a
+single duct-containing batch to prove the model+loss+labels can represent the
+duct at all.
 
 Qualitative examples: see `notebooks/07_results_visualization.ipynb` (loads
 the trained checkpoints from HuggingFace and renders

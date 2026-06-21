@@ -45,6 +45,23 @@ loss:
 
 sampler: weighted_random           # WeightedRandomSampler on inverse class freq
 
+# Rare-class copy-paste augmentation (Ghiasi et al., CVPR 2021): harvest
+# cystic_duct (and, with Endoscapes, cystic_artery) patches from labelled frames
+# and paste them onto other train frames, multiplying how often the rare
+# structure and its boundaries are seen. Disabled by default (it adds a one-time
+# raw-decode pass to harvest the bank); enable for the small-structure goal with
+# copy_paste.enabled=true.
+copy_paste:
+  enabled: false
+  classes: [cystic_duct]           # rare classes to harvest/paste (artery once Endoscapes is joined)
+  paste_prob: 0.5                  # fraction of train frames that get a paste
+  max_instances: 2                 # up to this many pasted instances per frame/clip
+  scale_range: [0.7, 1.3]          # per-instance scale jitter
+  p_flip: 0.5                      # horizontal-flip probability per instance
+  margin: 0.25                     # context kept around each harvested instance
+  min_pixels: 20                   # ignore sliver instances smaller than this
+  max_per_class: 300               # cap on harvested instances per class
+
 early_stopping:
   # Selection target is the cystic_duct (the CVS-critical, thin/sparse class):
   # the best checkpoint is the epoch with the highest val cystic_duct Dice, not

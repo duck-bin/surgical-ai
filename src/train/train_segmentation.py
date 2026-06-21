@@ -102,6 +102,43 @@ def _resolve_precision(requested: str) -> str:
     return requested
 
 
+def _build_copy_paste(cfg, common):
+    """Construct a RareClassCopyPaste from ``cfg.copy_paste``, or ``None``.
+
+    Harvests the instance bank from the raw train split once (a one-time decode
+    pass, like the class-stats pass) and seeds the paste RNG from ``cfg.seed``.
+    Returns ``None`` when copy-paste is absent or disabled, so the default path
+    is unchanged.
+    """
+    cp_cfg = cfg.get("copy_paste", None)
+    if not cp_cfg or not cp_cfg.get("enabled", False):
+        return None
+    from src.data.copy_paste import RareClassCopyPaste, instances_from_dataset
+
+    class_names = list(CLASS_NAMES)
+    rare = [class_names.index(name) for name in cp_cfg.get("classes",
+                                                           ["cystic_duct"])]
+    raw_ds = CholecSeg8kDataset(split="train", transform=None, **common)
+    bank = instances_from_dataset(
+        raw_ds, rare,
+        margin=float(cp_cfg.get("margin", 0.25)),
+        min_pixels=int(cp_cfg.get("min_pixels", 20)),
+        max_per_class=int(cp_cfg.get("max_per_class", 300)),
+    )
+    print(f"[copy-paste] harvested {len(bank)} rare-class instances "
+          f"for classes {rare}")
+    if not bank:
+        return None
+    return RareClassCopyPaste(
+        bank,
+        paste_prob=float(cp_cfg.get("paste_prob", 0.5)),
+        max_instances=int(cp_cfg.get("max_instances", 2)),
+        scale_range=tuple(cp_cfg.get("scale_range", (0.7, 1.3))),
+        p_flip=float(cp_cfg.get("p_flip", 0.5)),
+        seed=cfg.seed,
+    )
+
+
 @hydra.main(version_base=None, config_path="../../configs",
             config_name="segmentation")
 def main(cfg: DictConfig) -> None:
@@ -120,15 +157,21 @@ def main(cfg: DictConfig) -> None:
     is_temporal = window is not None
     eval_tf = build_eval_transforms(cfg.data.image_size)
     train_tf = build_train_transforms(cfg.data.image_size, replay=is_temporal)
+    # Rare-class copy-paste (train split only): harvest cystic_duct/-artery
+    # patches once and paste them onto other frames to multiply how often the
+    # model sees the rare structure and its boundaries. Disabled by default.
+    copy_paste = _build_copy_paste(cfg, common)
     if is_temporal:
         train_ds = CholecSeg8kWindowDataset(split="train", window=window,
-                                            transform=train_tf, **common)
+                                            transform=train_tf,
+                                            copy_paste=copy_paste, **common)
         val_ds = CholecSeg8kWindowDataset(split="val", window=window,
                                           transform=eval_tf, **common)
         test_ds = CholecSeg8kWindowDataset(split="test", window=window,
                                            transform=eval_tf, **common)
     else:
-        train_ds = CholecSeg8kDataset(split="train", transform=train_tf, **common)
+        train_ds = CholecSeg8kDataset(split="train", transform=train_tf,
+                                      copy_paste=copy_paste, **common)
         val_ds = CholecSeg8kDataset(split="val", transform=eval_tf, **common)
         test_ds = CholecSeg8kDataset(split="test", transform=eval_tf, **common)
 
