@@ -116,6 +116,22 @@ def test_make_frame_windows_falls_back_to_item_order():
     assert windows == [(0, 1), (1, 2)]
 
 
+def test_window_sample_weights_uses_target_frame():
+    """Each clip's weight is its target (last) frame's per-frame weight."""
+    from src.data.class_balance import window_sample_weights
+
+    # Frame weights aligned to local indices 0..4 (e.g. frame 3 holds a rare class).
+    frame_weights = np.array([1.0, 1.0, 1.0, 9.0, 1.0])
+    windows = [(0, 1, 2), (1, 2, 3), (2, 3, 4)]
+
+    out = window_sample_weights(windows, frame_weights)
+
+    # Window targets are frames 2, 3, 4 -> weights 1.0, 9.0, 1.0.
+    assert out.tolist() == [1.0, 9.0, 1.0]
+    # The clip predicting the rare-class frame is oversampled the most.
+    assert out.argmax() == 1
+
+
 def test_train_transforms_output_shapes():
     """Train pipeline yields a (3,512,512) float image and (512,512) mask."""
     pytest.importorskip("albumentations")

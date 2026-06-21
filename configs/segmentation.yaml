@@ -9,6 +9,7 @@ deterministic: true
 precision: bf16-mixed        # fp16-mixed fallback on non-A100 hardware
 
 epochs: 100
+min_epochs: 40               # don't let early-stopping fire during the cystic_duct zero-Dice warmup
 batch_size: 16               # effective batch; low_memory splits it 1 x 16-accum
 low_memory: true             # T4/16GB GPUs: per-device batch 1, 16x grad accum
 limit_batches: 1.0           # fraction (<=1.0) or int #batches per epoch; e.g. 20 for a smoke test
@@ -28,7 +29,11 @@ loss:
   dice_weight: 1.0
   focal_weight: 1.0
   focal_gamma: 2.0
-  class_weighting: inv_sqrt_freq   # inverse sqrt frequency, clipped to [0.5, 10.0]
+  class_weighting: inv_sqrt_freq   # inverse sqrt frequency, clipped to class_weight_clip
+  # Upper clip raised from 10 -> 30 so the ~0.03%-prevalence cystic_duct
+  # (raw inv-sqrt weight ~57) actually gets a strong loss weight instead of
+  # being capped to the same 10 as the common classes.
+  class_weight_clip: [0.5, 30.0]
 
 sampler: weighted_random           # WeightedRandomSampler on inverse class freq
 
@@ -39,7 +44,11 @@ early_stopping:
   # classes). mIoU and every per-class Dice are still logged for analysis.
   monitor: val_cystic_duct_dice
   mode: max
-  patience: 10
+  # Raised 10 -> 25: on a 0.03%-prevalence class the monitored Dice can sit at
+  # zero for many epochs before it climbs; patience 10 read that as "converged"
+  # and cut the first run at epoch 11. min_epochs (above) is the hard floor;
+  # this patience then governs stopping only after the duct has had a chance.
+  patience: 25
 
 wandb:
   project: surgical-cvs-ai

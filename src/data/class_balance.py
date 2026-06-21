@@ -154,3 +154,25 @@ def sampler_from_weights(sample_weights) -> WeightedRandomSampler:
     weights = torch.as_tensor(np.asarray(sample_weights), dtype=torch.double)
     return WeightedRandomSampler(weights=weights, num_samples=weights.numel(),
                                  replacement=True)
+
+
+def window_sample_weights(windows, frame_sample_weights) -> np.ndarray:
+    """Per-clip sampler weights for the temporal (window) path.
+
+    The frame-level WeightedRandomSampler does not apply to clip-indexed
+    temporal training, so the only model trained so far saw rare classes (e.g.
+    ``cystic_duct``) at their natural <0.1% prevalence. This rebuilds the same
+    oversampling at clip granularity: each window is weighted by its *target*
+    (last) frame's weight, since that is the frame the temporal model predicts.
+    Clips whose predicted frame contains a rare class are therefore drawn more
+    often, exactly as the per-frame sampler oversamples rare-class frames.
+
+    ``windows`` is the list of local-index tuples built by
+    :class:`~src.data.cholecseg8k.CholecSeg8kWindowDataset` (its ``_windows``);
+    its local indices line up with ``frame_sample_weights``, which is computed
+    over the *same split and seed* in frame order. Returns a float64 array of
+    one weight per window, ready for :func:`sampler_from_weights`.
+    """
+    weights = np.asarray(frame_sample_weights, dtype=np.float64)
+    return np.array([weights[window[-1]] for window in windows],
+                    dtype=np.float64)
