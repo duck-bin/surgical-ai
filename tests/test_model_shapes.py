@@ -285,7 +285,7 @@ def test_temporal_segmentation_module_smoke():
         logits = model(batch["image"])
         assert tuple(logits.shape) == (1, 6, 64, 64)
         loss = (module.focal_weight * module.focal(logits, batch["mask"])
-                + module.dice_weight * module.dice(logits, batch["mask"]))
+                + module.dice_weight * module.region(logits, batch["mask"]))
         assert torch.isfinite(loss)
     del logits, loss
     gc.collect()

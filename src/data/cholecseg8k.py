@@ -264,6 +264,7 @@ class CholecSeg8kDataset(Dataset):
         mask_column: str = "color_mask",
         video_id_column: str = "video_id",
         split_seed: int = 42,
+        copy_paste=None,
     ):
         if split not in ("train", "val", "test"):
             raise ValueError(f"split must be 'train'/'val'/'test', got {split!r}")
@@ -273,6 +274,9 @@ class CholecSeg8kDataset(Dataset):
         self.transform = transform
         self.image_column = image_column
         self.mask_column = mask_column
+        # Optional rare-class copy-paste (train only), applied to the raw frame
+        # before the albumentations pipeline so the paste is augmented too.
+        self.copy_paste = copy_paste
 
         dataset = load_cholecseg8k(hf_repo, cache_dir)
         # Unwrap a DatasetDict to the requested HF split if necessary.
@@ -354,6 +358,8 @@ class CholecSeg8kDataset(Dataset):
 
     def __getitem__(self, index: int) -> dict:
         image, mask = self._load_raw(index)
+        if self.copy_paste is not None:
+            image, mask = self.copy_paste(image, mask)
 
         if self.transform is not None:
             out = self.transform(image=image, mask=mask)
@@ -388,15 +394,18 @@ class CholecSeg8kWindowDataset(Dataset):
     """
 
     def __init__(self, split: str = "train", window: int = 3, transform=None,
-                 **dataset_kwargs):
+                 copy_paste=None, **dataset_kwargs):
         if window < 1:
             raise ValueError(f"window must be >= 1, got {window}")
         # The base dataset handles loading and the video-level split; the
         # window dataset applies its own (window-consistent) transform, so the
-        # base is built transform-free.
+        # base is built transform-free. copy_paste is held here (not on the base)
+        # so one plan can be sampled per clip and applied identically to every
+        # frame -- a spatially consistent paste across the window the ConvGRU sees.
         self.base = CholecSeg8kDataset(split=split, transform=None, **dataset_kwargs)
         self.window = window
         self.transform = transform
+        self.copy_paste = copy_paste
         self._windows = self._build_windows()
 
     def _build_windows(self) -> list[tuple[int, ...]]:
@@ -416,8 +425,17 @@ class CholecSeg8kWindowDataset(Dataset):
     def __getitem__(self, index: int) -> dict:
         local_indices = self._windows[index]
         frames, target_mask, replay = [], None, None
+        # One copy-paste plan per clip, applied to every frame at the same place,
+        # so the pasted structure is temporally consistent across the window.
+        paste_plan = None
+        if self.copy_paste is not None:
+            first_image, _ = self.base._load_raw(local_indices[0])
+            paste_plan = self.copy_paste.sample_plan(
+                first_image.shape[0], first_image.shape[1])
         for position, local_index in enumerate(local_indices):
             image, mask = self.base._load_raw(local_index)
+            if paste_plan:
+                image, mask = self.copy_paste.apply(image, mask, paste_plan)
             if self.transform is None:
                 image_t = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
                 mask_t = torch.from_numpy(mask)
