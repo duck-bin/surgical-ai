@@ -85,13 +85,27 @@ liver 0.849, gallbladder 0.606, **cystic_duct 0.000**, tool 0.805. The
 `cystic_artery` class has no CholecSeg8k labels; it will be learned from
 Endoscapes2023.
 
-**Why `cystic_duct = 0` (and what changed).** Three causes compounded on the
-first run: (1) early stopping monitored `val_cystic_duct_dice` (mode=max,
-patience=10), so on a 0.031%-prevalence class — which needs 30+ epochs before
-that metric leaves zero — it read "10 epochs at 0" as no improvement and cut
-training at epoch 11/99; (2) the WeightedRandomSampler that oversamples
-rare-class frames was *frame-indexed and therefore disabled for the temporal
-model*, so the only model trained so far saw the duct at its natural <0.1%
+**Why `cystic_duct = 0` — the real root cause.** A pre-training scan
+(`notebooks/08_pretrain_validation.ipynb`) of the *whole* CholecSeg8k train
+split found the cystic duct in **2 frames, 3 pixels total** — confirmed
+independently in both `color_mask` and `watershed_mask` (canonical duct index
+25). CholecSeg8k, in this version, effectively **does not label the cystic
+duct** (and never labels the cystic artery). So the earlier "needs more training
+time" story was wrong: there was almost no label to learn from. The CVS-critical
+tubular structures (duct *and* artery) are therefore learned from
+**Endoscapes2023**, which annotates both (`src/data/endoscapes_seg.py`);
+CholecSeg8k still supplies the large anatomy (liver/gallbladder/tool). The
+training-side fixes below remain necessary for the duct/artery on Endoscapes
+(they are small and rare there too) — they were just not *sufficient* on a
+dataset that lacks the labels.
+
+**Training-side fixes for the (now Endoscapes-sourced) thin classes.** Earlier
+analysis of the first run also surfaced real training bugs, all fixed: (1) early
+stopping monitored `val_cystic_duct_dice` (mode=max,
+patience=10), so on a near-zero-prevalence class it read "10 epochs at 0" as no
+improvement and cut training at epoch 11/99; (2) the WeightedRandomSampler that
+oversamples rare-class frames was *frame-indexed and therefore disabled for the
+temporal model*, so the only model trained so far saw the duct at its natural <0.1%
 prevalence; (3) the inverse-sqrt loss weight was clipped to 10, the same cap as
 the common classes. Frame-level visualization (notebook 07) confirms the large
 classes (liver/gallbladder/tool) were learnt well; the duct simply was barely
