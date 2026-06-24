@@ -168,6 +168,10 @@ python -m src.train.train_segmentation model=sam2_lora   # or model=unet_baselin
 # Temporal variant: a ConvGRU head over a window of T=3 consecutive frames,
 # targeting cystic_duct recall + frame-to-frame consistency (drop-in output).
 python -m src.train.train_segmentation model=sam2_temporal
+# cystic_duct/cystic_artery: CholecSeg8k barely labels these, so learn them from
+# Endoscapes-Seg instead (frame-level; copy-paste recommended for the rare classes):
+python -m src.train.train_segmentation data=endoscapes2023_seg model=sam2_lora \
+       copy_paste.enabled=true
 python -m src.train.train_cvs
 
 # 4. Benchmark + visualization + demo

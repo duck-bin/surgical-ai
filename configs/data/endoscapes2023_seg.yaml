@@ -1,0 +1,14 @@
+# Endoscapes2023 semantic segmentation — the source of cystic_duct/cystic_artery.
+# CholecSeg8k effectively does not label these thin tubular structures (verified:
+# 2 frames / 3 px across its whole train split), so they are learned here.
+# Download: bash scripts/download_endoscapes.sh   (extracts to <root>/endoscapes/)
+# Frame-level only (Endoscapes-Seg keyframes are ~1/30s apart -> no temporal windows).
+name: endoscapes2023_seg
+loader: endoscapes2023_seg
+root: ./data/endoscapes2023
+cache_dir: ./data/endoscapes2023      # class-statistics cache lives here
+
+num_classes: 6
+class_names: [background, liver, gallbladder, cystic_duct, cystic_artery, tool]
+
+image_size: 1024                      # SAM2 Hiera resolution; 512 also fine for U-Net
