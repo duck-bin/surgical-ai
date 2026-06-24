@@ -31,6 +31,7 @@ from src.data.class_balance import (
     sampler_from_weights,
     window_sample_weights,
 )
+from src.data.endoscapes_seg import EndoscapesSegDataset
 from src.data.transforms import build_eval_transforms, build_train_transforms
 from src.models.sam2_lora import SAM2LoRASegmenter
 from src.models.temporal import TemporalSAM2LoRASegmenter
@@ -102,7 +103,51 @@ def _resolve_precision(requested: str) -> str:
     return requested
 
 
-def _build_copy_paste(cfg, common):
+def _make_dataset_fn(cfg):
+    """Return ``(make, supports_temporal, stats_key)`` for the active loader.
+
+    ``make(split, transform, copy_paste=None, window=None)`` builds the right
+    dataset for ``cfg.data`` -- CholecSeg8k (HF, video-level split, optional
+    temporal windows) or Endoscapes-Seg (the source of cystic_duct/artery, with
+    official splits and frame-level only). All datasets share the ``{image,
+    mask}`` / ``_load_raw`` contract, so the rest of the training script (stats,
+    sampler, copy-paste, Lightning) is loader-agnostic. ``stats_key`` namespaces
+    the cached class-statistics file so the two datasets never collide.
+    """
+    name = str(cfg.data.get("loader", cfg.data.name)).lower()
+    if name == "cholecseg8k":
+        common = dict(hf_repo=cfg.data.hf_repo, cache_dir=cfg.data.cache_dir,
+                      image_size=cfg.data.image_size,
+                      split_seed=cfg.data.split.seed)
+
+        def make(split, transform, copy_paste=None, window=None):
+            if window is not None:
+                return CholecSeg8kWindowDataset(split=split, window=window,
+                                                transform=transform,
+                                                copy_paste=copy_paste, **common)
+            return CholecSeg8kDataset(split=split, transform=transform,
+                                      copy_paste=copy_paste, **common)
+
+        return make, True, f"cholecseg8k_seed{cfg.data.split.seed}"
+
+    if name in ("endoscapes2023_seg", "endoscapes_seg"):
+        kwargs = dict(root=cfg.data.root, image_size=cfg.data.image_size)
+
+        def make(split, transform, copy_paste=None, window=None):
+            if window is not None:
+                raise ValueError(
+                    "Endoscapes-Seg frames are sparse keyframes (~1/30s), so the "
+                    "temporal (window) model is not supported here -- use a "
+                    "frame-level model (e.g. model=sam2_lora).")
+            return EndoscapesSegDataset(split=split, transform=transform,
+                                        copy_paste=copy_paste, **kwargs)
+
+        return make, False, "endoscapes2023_seg"
+
+    raise ValueError(f"Unknown data loader '{name}'.")
+
+
+def _build_copy_paste(cfg, make_ds):
     """Construct a RareClassCopyPaste from ``cfg.copy_paste``, or ``None``.
 
     Harvests the instance bank from the raw train split once (a one-time decode
@@ -118,7 +163,7 @@ def _build_copy_paste(cfg, common):
     class_names = list(CLASS_NAMES)
     rare = [class_names.index(name) for name in cp_cfg.get("classes",
                                                            ["cystic_duct"])]
-    raw_ds = CholecSeg8kDataset(split="train", transform=None, **common)
+    raw_ds = make_ds("train", None)  # frame-level, no transform -> _load_raw
     bank = instances_from_dataset(
         raw_ds, rare,
         margin=float(cp_cfg.get("margin", 0.25)),
@@ -144,36 +189,27 @@ def _build_copy_paste(cfg, common):
 def main(cfg: DictConfig) -> None:
     seed_everything(cfg.seed, cfg.deterministic)
 
-    common = dict(
-        hf_repo=cfg.data.hf_repo,
-        cache_dir=cfg.data.cache_dir,
-        image_size=cfg.data.image_size,
-        split_seed=cfg.data.split.seed,
-    )
+    # Dataset factory: CholecSeg8k (big anatomy, optional temporal windows) or
+    # Endoscapes-Seg (the source of cystic_duct/artery, frame-level only).
+    make_ds, supports_temporal, stats_key = _make_dataset_fn(cfg)
     # The temporal model consumes clips of `window` consecutive frames; its
     # train augmentation must be replay-consistent across the clip (ConvGRU
     # needs spatial correspondence), so the train transform is a ReplayCompose.
     window = cfg.model.get("window", None)
     is_temporal = window is not None
+    if is_temporal and not supports_temporal:
+        raise ValueError(
+            f"model={cfg.model.name} is temporal but data={cfg.data.name} does "
+            "not support temporal windows; use a frame-level model.")
     eval_tf = build_eval_transforms(cfg.data.image_size)
     train_tf = build_train_transforms(cfg.data.image_size, replay=is_temporal)
     # Rare-class copy-paste (train split only): harvest cystic_duct/-artery
     # patches once and paste them onto other frames to multiply how often the
     # model sees the rare structure and its boundaries. Disabled by default.
-    copy_paste = _build_copy_paste(cfg, common)
-    if is_temporal:
-        train_ds = CholecSeg8kWindowDataset(split="train", window=window,
-                                            transform=train_tf,
-                                            copy_paste=copy_paste, **common)
-        val_ds = CholecSeg8kWindowDataset(split="val", window=window,
-                                          transform=eval_tf, **common)
-        test_ds = CholecSeg8kWindowDataset(split="test", window=window,
-                                           transform=eval_tf, **common)
-    else:
-        train_ds = CholecSeg8kDataset(split="train", transform=train_tf,
-                                      copy_paste=copy_paste, **common)
-        val_ds = CholecSeg8kDataset(split="val", transform=eval_tf, **common)
-        test_ds = CholecSeg8kDataset(split="test", transform=eval_tf, **common)
+    copy_paste = _build_copy_paste(cfg, make_ds)
+    train_ds = make_ds("train", train_tf, copy_paste=copy_paste, window=window)
+    val_ds = make_ds("val", eval_tf, window=window)
+    test_ds = make_ds("test", eval_tf, window=window)
 
     # Per-class loss weights and the sampler are derived from the train split
     # under the deterministic eval transform (same frame order as train_ds).
@@ -189,12 +225,14 @@ def main(cfg: DictConfig) -> None:
     class_weights = None
     sample_weights = None
     if need_class_weights or need_sampler:
-        stats_ds = CholecSeg8kDataset(split="train", transform=eval_tf, **common)
+        # Frame-level train set under the deterministic eval transform (same
+        # frame order as train_ds; no windows even for the temporal model).
+        stats_ds = make_ds("train", eval_tf)
         # One pass computes BOTH frequencies and sampler weights, cached to disk
-        # keyed by split seed -- re-runs and later models then start instantly
-        # instead of repeating the multi-minute decode of the whole train set.
+        # keyed by the loader+split -- re-runs and later models then start
+        # instantly instead of repeating the multi-minute decode of the train set.
         cache_path = os.path.join(
-            cfg.data.cache_dir, f"class_stats_seed{cfg.data.split.seed}.npz")
+            cfg.data.cache_dir, f"class_stats_{stats_key}.npz")
         frequencies, sample_weights = compute_or_load_class_stats(
             stats_ds, NUM_CLASSES, cache_path=cache_path)
         if need_class_weights:
