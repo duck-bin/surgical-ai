@@ -36,6 +36,7 @@ from src.data.transforms import build_eval_transforms, build_train_transforms
 from src.models.sam2_lora import SAM2LoRASegmenter
 from src.models.temporal import TemporalSAM2LoRASegmenter
 from src.models.unet_baseline import UNetBaseline
+from src.train.callbacks import EpochProgress
 from src.train.lightning_modules import SegmentationModule
 from src.utils.seeds import seed_everything
 
@@ -225,9 +226,12 @@ def main(cfg: DictConfig) -> None:
     class_weights = None
     sample_weights = None
     if need_class_weights or need_sampler:
-        # Frame-level train set under the deterministic eval transform (same
-        # frame order as train_ds; no windows even for the temporal model).
-        stats_ds = make_ds("train", eval_tf)
+        # Frame-level train set, no transform: the stats pass counts mask pixels
+        # via the dataset's mask-only ``load_mask`` (skipping the image decode and
+        # the eval-transform resize), so it needs neither. Same frame order as
+        # train_ds -- driven only by split+seed -- so sample_weights stay aligned
+        # with the sampler (no windows even for the temporal model).
+        stats_ds = make_ds("train", None)
         # One pass computes BOTH frequencies and sampler weights, cached to disk
         # keyed by the loader+split -- re-runs and later models then start
         # instantly instead of repeating the multi-minute decode of the train set.
@@ -294,6 +298,11 @@ def main(cfg: DictConfig) -> None:
                         dirpath=checkpoint_dir, filename="best",
                         save_last=True),
     ]
+    # Per-epoch terminal summary (epoch number, wall-clock time, key metrics) so
+    # the run can be followed in a plain RunPod/Colab terminal without wandb.
+    progress_cfg = cfg.get("progress", {})
+    if progress_cfg.get("per_epoch", True):
+        callbacks.append(EpochProgress(max_epochs=cfg.epochs))
     # wandb logger: disabled by default (offline-friendly). Set
     # ``wandb.mode=online`` to stream live training curves to the wandb web UI;
     # set ``wandb.mode=offline`` to log to disk only.
@@ -320,6 +329,10 @@ def main(cfg: DictConfig) -> None:
         callbacks=callbacks,
         logger=logger,
         log_every_n_steps=10,
+        # Lightning's in-epoch tqdm bar: keep it on an interactive terminal, but
+        # set progress.bar=false to silence its carriage-return spam when stdout
+        # is redirected to a log file (the per-epoch summary above still prints).
+        enable_progress_bar=progress_cfg.get("bar", True),
     )
     # Resume from the last checkpoint when a previous run was interrupted
     # (e.g. a Colab disconnect) -- re-running the script then continues.

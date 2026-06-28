@@ -12,12 +12,18 @@ the *eval* transform (deterministic) rather than the randomized train pipeline.
 from __future__ import annotations
 
 import os
+import time
 
 import numpy as np
 import torch
 from torch.utils.data import WeightedRandomSampler
 
 from src.data.cholecseg8k import NUM_CLASSES
+
+# Bump when the *meaning* of the cached stats changes (e.g. the switch to
+# counting native-resolution masks instead of transform-resized ones), so stale
+# .npz caches recompute once instead of silently feeding old numbers.
+_STATS_CACHE_VERSION = 2
 
 
 def _mask_of(item, mask_key: str) -> np.ndarray:
@@ -26,6 +32,27 @@ def _mask_of(item, mask_key: str) -> np.ndarray:
     if torch.is_tensor(mask):
         mask = mask.cpu().numpy()
     return np.asarray(mask)
+
+
+def _iter_masks(dataset, mask_key: str):
+    """Yield each frame's integer label mask, decoding the image only if forced.
+
+    When the dataset exposes ``load_mask(i)`` (CholecSeg8k / Endoscapes-Seg), it
+    decodes *only* the mask at native resolution -- skipping the full RGB image
+    decode and the costly resize the eval transform would apply. That is the bulk
+    of the pre-train startup cost, since the stats pass never needs the image.
+    Datasets without ``load_mask`` fall back to indexing (``dataset[i][mask_key]``).
+    """
+    loader = getattr(dataset, "load_mask", None)
+    n = len(dataset)
+    start = time.time()
+    log_every = max(1, n // 10)  # ~10 progress lines over the pass
+    for i in range(n):
+        yield np.asarray(loader(i)) if loader is not None else _mask_of(
+            dataset[i], mask_key)
+        if (i + 1) % log_every == 0 or (i + 1) == n:
+            print(f"  [class-stats] {i + 1}/{n} masks "
+                  f"({time.time() - start:.0f}s)", flush=True)
 
 
 def compute_pixel_frequencies(dataset, num_classes: int = NUM_CLASSES,
@@ -101,9 +128,9 @@ def compute_class_stats(dataset, num_classes: int = NUM_CLASSES,
     """
     counts = np.zeros(num_classes, dtype=np.int64)
     present_per_frame: list[np.ndarray] = []
-    for i in range(len(dataset)):
-        mask = _mask_of(dataset[i], mask_key).ravel().astype(np.int64)
-        binc = np.bincount(mask, minlength=num_classes)[:num_classes]
+    for mask in _iter_masks(dataset, mask_key):
+        binc = np.bincount(mask.ravel().astype(np.int64),
+                           minlength=num_classes)[:num_classes]
         counts += binc
         present_per_frame.append(np.nonzero(binc)[0])
 
@@ -135,17 +162,25 @@ def compute_or_load_class_stats(dataset, num_classes: int = NUM_CLASSES,
         try:
             cached = np.load(cache_path)
             freqs, weights = cached["frequencies"], cached["sample_weights"]
-            if weights.shape[0] == len(dataset) and freqs.shape[0] == num_classes:
+            version = int(cached["version"]) if "version" in cached else 1
+            if (version == _STATS_CACHE_VERSION
+                    and weights.shape[0] == len(dataset)
+                    and freqs.shape[0] == num_classes):
+                print(f"[class-stats] loaded cache {cache_path}", flush=True)
                 return freqs, weights
         except Exception:
             pass  # corrupt/stale cache -> recompute below
 
+    print(f"[class-stats] computing over {len(dataset)} train frames "
+          "(one-time; cached afterwards)...", flush=True)
     frequencies, sample_weights = compute_class_stats(dataset, num_classes, mask_key)
     if cache_path:
         directory = os.path.dirname(cache_path)
         if directory:
             os.makedirs(directory, exist_ok=True)
-        np.savez(cache_path, frequencies=frequencies, sample_weights=sample_weights)
+        np.savez(cache_path, frequencies=frequencies, sample_weights=sample_weights,
+                 version=_STATS_CACHE_VERSION)
+        print(f"[class-stats] cached -> {cache_path}", flush=True)
     return frequencies, sample_weights
 
 

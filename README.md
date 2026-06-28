@@ -224,6 +224,24 @@ python -m src.train.train_segmentation model=sam2_temporal wandb.mode=online
 - To visualise on a different machine (e.g. Colab) instead of the pod, just
   copy the `outputs/` folder over — notebook 07 reads from `outputs/<model>/best.ckpt`.
 
+### Watching training progress
+
+By default each run prints a per-epoch summary line straight to the terminal —
+no wandb, no extra setup:
+
+```text
+[train] starting -- up to 100 epochs, 459 train batches/epoch
+[class-stats] computing over 5734 train frames (one-time; cached afterwards)...
+  [class-stats] 5734/5734 masks (41s)
+[epoch   1/100]  612.4s  train_loss=1.8423  val_loss=1.5501  val_miou=0.3120  val_cystic_duct_dice=0.0000
+[epoch   2/100]  598.1s  train_loss=1.2210  val_loss=1.1908  val_miou=0.4015  val_cystic_duct_dice=0.0000
+```
+
+This is the simplest way to confirm epochs are advancing on a RunPod pod. Set
+`progress.bar=false` to suppress Lightning's in-epoch tqdm bar (useful when
+redirecting stdout to a log file), or `progress.per_epoch=false` to drop the
+summary line.
+
 ### Live training curves with Weights & Biases (optional)
 
 Training logs `loss / val_miou / val_<class>_dice / val_cystic_duct_dice` every
@@ -262,10 +280,19 @@ What is wired and verified end-to-end:
   (Lightning + Hydra, bf16 mixed precision, AdamW + cosine + 5-epoch warmup,
   resume from `outputs/<model>/last.ckpt`).
 - **Class-balance pipeline** with inverse-sqrt-frequency loss weights and a
-  WeightedRandomSampler over the train split. The expensive per-frame pass is
-  computed once and cached to
-  `<data.cache_dir>/class_stats_seed<seed>.npz`, so re-runs and subsequent
-  models start in seconds instead of re-decoding the full train set.
+  WeightedRandomSampler over the train split. The per-frame pass decodes **only
+  the masks** at native resolution (skipping the RGB image decode and the
+  letterbox-resize the eval transform would apply), and is cached to
+  `<data.cache_dir>/class_stats_<loader>_seed<seed>.npz`, so the **first** run's
+  startup is much shorter and re-runs / subsequent models start in seconds. The
+  pass prints `[class-stats] N/M masks` progress so it's clearly working, not
+  hung.
+- **Terminal per-epoch progress.** An `EpochProgress` callback prints one
+  flushed line per epoch — `[epoch 12/100] 87.3s train_loss=… val_miou=…
+  val_cystic_duct_dice=…` — so a run is followable in a plain RunPod/Colab
+  terminal (or a redirected log) without wandb. Toggle with `progress.per_epoch`
+  / `progress.bar` (the latter silences Lightning's in-epoch tqdm bar when
+  piping to a file).
 - **Video-level split + sliding windows.** `CholecSeg8kWindowDataset` builds
   contiguous T-frame windows grouped by video, never crossing a video or
   train/val/test boundary; replay-consistent augmentation across the clip via
