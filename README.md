@@ -296,6 +296,19 @@ What is wired and verified end-to-end:
   progress so it's clearly working, not hung. Because the default split is
   deterministic, that `.npz` can even be committed/shared to skip the **first**
   run's pass entirely (see the RunPod tips).
+
+  Counting native-resolution masks is also **more accurate**, not just faster:
+  the old pass counted the *eval-transformed* mask, i.e. the 1024×1024 letterbox
+  in which ~44% of pixels are zero-**padding** counted as `background` — so the
+  measured class distribution was skewed (background inflated, every other class
+  deflated). Native-resolution counts reflect the dataset's true distribution.
+  The effect on training is negligible by design: the loss weights are clipped to
+  `[0.5, 30]`, so the extreme classes are unchanged (`background` pins to the
+  floor, `cystic_duct`/`cystic_artery` pin to the ceiling either way), and the
+  sampler is unaffected — letterbox only *upsamples*, so per-frame class
+  *presence* is identical, and the per-frame weights shift by a near-constant
+  factor that `WeightedRandomSampler` normalizes away. (The stats cache carries a
+  `version` field, so an older padding-contaminated `.npz` recomputes once.)
 - **Terminal per-epoch progress.** An `EpochProgress` callback prints one
   flushed line per epoch — `[epoch 12/100] 87.3s train_loss=… val_miou=…
   val_cystic_duct_dice=…` — so a run is followable in a plain RunPod/Colab
