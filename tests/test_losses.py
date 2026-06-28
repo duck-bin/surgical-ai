@@ -9,7 +9,23 @@ recovers Dice up to smoothing.
 import torch
 
 from src.losses.dice import DiceLoss
+from src.losses.focal import FocalLoss
 from src.losses.tversky import TverskyLoss
+
+
+def test_focal_class_weights_excluded_from_state_dict():
+    """class_weights are recomputed per run, so they must not be checkpointed.
+
+    Otherwise a weighted run cannot resume an unweighted checkpoint (strict
+    load fails on 'focal.class_weights'). The buffer is persistent=False -- absent
+    from state_dict yet still applied at runtime.
+    """
+    weighted = FocalLoss(gamma=2.0, class_weights=[1.0, 5.0, 2.0, 10.0, 10.0, 1.0])
+    plain = FocalLoss(gamma=2.0)
+    assert "class_weights" not in weighted.state_dict()
+    # Interchangeable state_dicts -> a weighted run can resume an unweighted one.
+    assert weighted.state_dict().keys() == plain.state_dict().keys()
+    assert weighted.class_weights is not None  # still applied at runtime
 
 
 def _logits_from_prediction(pred_class, num_classes):

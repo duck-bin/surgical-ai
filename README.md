@@ -189,18 +189,27 @@ The repo defaults are wired for a single 24 GB A100 (or 16 GB T4 with
 ```bash
 # 1. Create the pod
 #    Template: "PyTorch 2.x" (CUDA 12.x)  GPU: A100 (80 GB or 40 GB both fine)
-#    Volume:   60 GB+ (CholecSeg8k ~3 GB + 3 checkpoints ~3-6 GB + scratch)
+#    Volume:   80 GB+ (CholecSeg8k ~3 GB + Endoscapes ~6 GB + checkpoints + scratch)
 #    Open the pod's Jupyter / Web Terminal.
 
 # 2. Clone + install (one-off, ~3 min)
 git clone https://github.com/duck-bin/surgical-ai.git && cd surgical-ai
 pip install -r requirements.txt
 
-# 3. Data (~3 GB, ~20-40 min on first run; cached afterwards)
-bash scripts/download_cholecseg8k.sh
+# 3. Data
+bash scripts/download_cholecseg8k.sh       # ~3 GB (liver/gallbladder/tool)
+bash scripts/download_endoscapes.sh        # ~5.9 GB (the cystic_duct/artery source)
 
-# 4. Train the three segmentation models (~6-8 h each on A100;
-#    low_memory=false lifts the per-device batch from 1 to 4)
+# 4a. cystic_duct / cystic_artery on Endoscapes-Seg (the CVS-critical structures;
+#     CholecSeg8k barely labels them -- see "Why cystic_duct = 0"). Frame-level
+#     only; copy_paste recommended. This is the run that matters for CVS.
+python -m src.train.train_segmentation \
+       data=endoscapes2023_seg model=sam2_lora \
+       low_memory=false num_workers=4 copy_paste.enabled=true wandb.mode=online
+
+# 4b. (Optional) big anatomy on CholecSeg8k (~6-8 h each on A100; low_memory=false
+#     lifts the per-device batch from 1 to 4). Note: these will NOT learn the
+#     duct/artery -- CholecSeg8k lacks those labels.
 python -m src.train.train_segmentation model=unet_baseline \
        low_memory=false num_workers=4
 python -m src.train.train_segmentation model=sam2_lora      \
