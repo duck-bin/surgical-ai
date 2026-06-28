@@ -238,7 +238,8 @@ def main(cfg: DictConfig) -> None:
         cache_path = os.path.join(
             cfg.data.cache_dir, f"class_stats_{stats_key}.npz")
         frequencies, sample_weights = compute_or_load_class_stats(
-            stats_ds, NUM_CLASSES, cache_path=cache_path)
+            stats_ds, NUM_CLASSES, cache_path=cache_path,
+            num_workers=cfg.num_workers)
         if need_class_weights:
             clip = tuple(cfg.loss.get("class_weight_clip", (0.5, 10.0)))
             class_weights = class_loss_weights(frequencies, clip=clip)
