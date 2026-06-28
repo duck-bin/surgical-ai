@@ -24,6 +24,7 @@ from torch.utils.data import DataLoader
 from src.data.endoscapes import Endoscapes2023Dataset
 from src.eval.benchmark_runner import load_segmentation_checkpoint
 from src.models.cvs_classifier import CVSClassifier
+from src.train.callbacks import EpochProgress
 from src.train.lightning_modules import CVSModule
 from src.train.train_segmentation import (
     _batch_and_accumulation,
@@ -146,6 +147,13 @@ def main(cfg: DictConfig) -> None:
                         dirpath=checkpoint_dir, filename="best",
                         save_last=True),
     ]
+    # Per-epoch terminal summary (mAP/QWK for this run) so progress is visible in
+    # a plain terminal without wandb.
+    progress_cfg = cfg.get("progress", {})
+    if progress_cfg.get("per_epoch", True):
+        callbacks.append(EpochProgress(
+            metrics=["train_loss", "val_loss", "val_map", "val_qwk"],
+            max_epochs=cfg.epochs))
     trainer = pl.Trainer(
         max_epochs=cfg.epochs,
         precision=_resolve_precision(cfg.precision),
@@ -155,6 +163,7 @@ def main(cfg: DictConfig) -> None:
         limit_test_batches=cfg.limit_batches,
         callbacks=callbacks,
         log_every_n_steps=10,
+        enable_progress_bar=progress_cfg.get("bar", True),
     )
     # Resume from the last checkpoint when a previous run was interrupted.
     last_ckpt = os.path.join(checkpoint_dir, "last.ckpt")

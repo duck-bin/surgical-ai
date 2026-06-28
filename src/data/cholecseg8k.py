@@ -356,6 +356,17 @@ class CholecSeg8kDataset(Dataset):
         mask = remap_mask(np.asarray(record[self.mask_column]))
         return image, mask
 
+    def load_mask(self, index: int) -> np.ndarray:
+        """Decode *only* the mask for one frame, remapped to 6-class indices.
+
+        Skips the (expensive) RGB image decode entirely. Used by the class-stats
+        pass, which counts mask pixels and so never needs the image -- decoding
+        and resizing thousands of full frames there is the bulk of the pre-train
+        startup time.
+        """
+        record = self._hf[self._indices[index]]
+        return remap_mask(np.asarray(record[self.mask_column]))
+
     def __getitem__(self, index: int) -> dict:
         image, mask = self._load_raw(index)
         if self.copy_paste is not None:

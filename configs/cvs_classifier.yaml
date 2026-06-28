@@ -43,6 +43,11 @@ early_stopping:
   mode: max
   patience: 10
 
+# Terminal progress (no wandb needed); see configs/segmentation.yaml for details.
+progress:
+  per_epoch: true
+  bar: true
+
 wandb:
   project: surgical-cvs-ai
   mode: disabled

@@ -75,6 +75,14 @@ early_stopping:
   # this patience then governs stopping only after the duct has had a chance.
   patience: 25
 
+# Terminal progress (no wandb needed). per_epoch prints a one-line summary
+# (epoch, wall-clock time, key metrics) at every epoch end; bar toggles
+# Lightning's in-epoch tqdm bar (set false to avoid carriage-return spam when
+# redirecting stdout to a log file).
+progress:
+  per_epoch: true
+  bar: true
+
 wandb:
   project: surgical-cvs-ai
   mode: disabled                   # set to "online"/"offline" to log to wandb

@@ -170,6 +170,18 @@ class EndoscapesSegDataset(Dataset):
             mask_np = remap_semseg(np.asarray(mask))
         return image_np, mask_np
 
+    def load_mask(self, index: int) -> np.ndarray:
+        """Decode *only* the mask PNG for one frame, remapped to 6-class indices.
+
+        Skips the RGB image decode so the class-stats pass (which only counts
+        mask pixels) is roughly twice as fast on first run.
+        """
+        from PIL import Image  # lazy: keeps this module offline-importable
+
+        _, mask_path = self._samples[index]
+        with Image.open(mask_path) as mask:
+            return remap_semseg(np.asarray(mask))
+
     def __getitem__(self, index: int) -> dict:
         image, mask = self._load_raw(index)
         if self.copy_paste is not None:
