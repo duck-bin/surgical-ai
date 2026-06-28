@@ -34,25 +34,77 @@ def _mask_of(item, mask_key: str) -> np.ndarray:
     return np.asarray(mask)
 
 
-def _iter_masks(dataset, mask_key: str):
-    """Yield each frame's integer label mask, decoding the image only if forced.
+def _frame_bincount(dataset, index: int, num_classes: int, mask_key: str,
+                    loader) -> np.ndarray:
+    """Per-class pixel counts for one frame, decoding the mask only if possible.
 
-    When the dataset exposes ``load_mask(i)`` (CholecSeg8k / Endoscapes-Seg), it
+    When the dataset exposes ``load_mask(i)`` (CholecSeg8k / Endoscapes-Seg) it
     decodes *only* the mask at native resolution -- skipping the full RGB image
-    decode and the costly resize the eval transform would apply. That is the bulk
-    of the pre-train startup cost, since the stats pass never needs the image.
-    Datasets without ``load_mask`` fall back to indexing (``dataset[i][mask_key]``).
+    decode and the resize the eval transform would apply. That is the bulk of the
+    pre-train startup cost, since the stats pass never needs the image. Datasets
+    without ``load_mask`` fall back to indexing (``dataset[i][mask_key]``).
     """
-    loader = getattr(dataset, "load_mask", None)
+    mask = np.asarray(loader(index)) if loader is not None else _mask_of(
+        dataset[index], mask_key)
+    return np.bincount(mask.ravel().astype(np.int64),
+                       minlength=num_classes)[:num_classes]
+
+
+class _BincountDataset(torch.utils.data.Dataset):
+    """torch Dataset that returns one frame's per-class pixel counts.
+
+    Doing the decode+bincount inside ``__getitem__`` lets a DataLoader fan the
+    work out across ``num_workers`` processes for the one-time stats pass, and
+    the fixed-size ``(num_classes,)`` result batches with the default collate.
+    """
+
+    def __init__(self, dataset, num_classes: int, mask_key: str):
+        self.dataset = dataset
+        self.num_classes = num_classes
+        self.mask_key = mask_key
+        self.loader = getattr(dataset, "load_mask", None)
+
+    def __len__(self) -> int:
+        return len(self.dataset)
+
+    def __getitem__(self, index: int):
+        return torch.from_numpy(_frame_bincount(
+            self.dataset, index, self.num_classes, self.mask_key, self.loader))
+
+
+def _iter_bincounts(dataset, num_classes: int, mask_key: str, num_workers: int):
+    """Yield each frame's per-class bincount (in dataset order), with progress.
+
+    ``num_workers > 0`` parallelizes the mask decode across worker processes via
+    a DataLoader (order preserved, so sampler weights stay aligned); otherwise it
+    runs a simple in-process loop.
+    """
     n = len(dataset)
     start = time.time()
     log_every = max(1, n // 10)  # ~10 progress lines over the pass
-    for i in range(n):
-        yield np.asarray(loader(i)) if loader is not None else _mask_of(
-            dataset[i], mask_key)
-        if (i + 1) % log_every == 0 or (i + 1) == n:
-            print(f"  [class-stats] {i + 1}/{n} masks "
+
+    def tick(done: int) -> None:
+        if done % log_every == 0 or done == n:
+            print(f"  [class-stats] {done}/{n} masks "
                   f"({time.time() - start:.0f}s)", flush=True)
+
+    if num_workers and num_workers > 0:
+        from torch.utils.data import DataLoader
+
+        loader = DataLoader(
+            _BincountDataset(dataset, num_classes, mask_key),
+            batch_size=64, num_workers=num_workers, shuffle=False)
+        done = 0
+        for batch in loader:  # (B, num_classes) int64
+            for row in batch.numpy():
+                yield row
+                done += 1
+                tick(done)
+    else:
+        load_mask = getattr(dataset, "load_mask", None)
+        for i in range(n):
+            yield _frame_bincount(dataset, i, num_classes, mask_key, load_mask)
+            tick(i + 1)
 
 
 def compute_pixel_frequencies(dataset, num_classes: int = NUM_CLASSES,
@@ -113,7 +165,7 @@ def make_weighted_sampler(dataset, num_classes: int = NUM_CLASSES,
 
 
 def compute_class_stats(dataset, num_classes: int = NUM_CLASSES,
-                        mask_key: str = "mask"):
+                        mask_key: str = "mask", num_workers: int = 0):
     """Per-class frequencies AND per-frame sampler weights in a *single* pass.
 
     Returns ``(frequencies, sample_weights)``:
@@ -125,12 +177,12 @@ def compute_class_stats(dataset, num_classes: int = NUM_CLASSES,
     This fuses :func:`compute_pixel_frequencies` and the weighting loop of
     :func:`make_weighted_sampler` so the dataset (whose items are decoded images)
     is iterated once instead of twice -- the expensive part on large datasets.
+    ``num_workers > 0`` fans the per-frame mask decode out across worker processes
+    (order preserved), cutting the one-time pass roughly by that factor.
     """
     counts = np.zeros(num_classes, dtype=np.int64)
     present_per_frame: list[np.ndarray] = []
-    for mask in _iter_masks(dataset, mask_key):
-        binc = np.bincount(mask.ravel().astype(np.int64),
-                           minlength=num_classes)[:num_classes]
+    for binc in _iter_bincounts(dataset, num_classes, mask_key, num_workers):
         counts += binc
         present_per_frame.append(np.nonzero(binc)[0])
 
@@ -148,15 +200,17 @@ def compute_class_stats(dataset, num_classes: int = NUM_CLASSES,
 
 def compute_or_load_class_stats(dataset, num_classes: int = NUM_CLASSES,
                                 cache_path: str | None = None,
-                                mask_key: str = "mask"):
+                                mask_key: str = "mask", num_workers: int = 0):
     """:func:`compute_class_stats` with an on-disk ``.npz`` cache.
 
     The full pass over the train set (decoding thousands of masks) takes many
     minutes; this caches the result so re-runs and subsequent models start
-    instantly. The cache is reused only when its ``sample_weights`` length and
-    ``frequencies`` size match the current dataset -- the caller is responsible
-    for keying ``cache_path`` on anything else that changes the split (e.g. the
-    split seed).
+    instantly. The cache is reused only when its ``version``, ``sample_weights``
+    length and ``frequencies`` size match the current dataset -- the caller is
+    responsible for keying ``cache_path`` on anything else that changes the split
+    (e.g. the split seed). Because the default split is deterministic, a generated
+    ``.npz`` can be committed/shared so the *first* run skips the pass entirely.
+    ``num_workers`` is forwarded to parallelize the one-time computation.
     """
     if cache_path and os.path.exists(cache_path):
         try:
@@ -173,7 +227,8 @@ def compute_or_load_class_stats(dataset, num_classes: int = NUM_CLASSES,
 
     print(f"[class-stats] computing over {len(dataset)} train frames "
           "(one-time; cached afterwards)...", flush=True)
-    frequencies, sample_weights = compute_class_stats(dataset, num_classes, mask_key)
+    frequencies, sample_weights = compute_class_stats(
+        dataset, num_classes, mask_key, num_workers=num_workers)
     if cache_path:
         directory = os.path.dirname(cache_path)
         if directory:

@@ -230,6 +230,13 @@ python -m src.train.train_segmentation model=sam2_temporal wandb.mode=online
 - Pod disconnects are safe — every run picks up the last checkpoint
   automatically. Just re-run the same `train_segmentation` command.
 - If a model is too slow, drop to T4-style: `low_memory=true num_workers=2`.
+- **Skip the one-time class-stats pass.** The first run computes per-class
+  statistics over the train split (now mask-only and parallelized over
+  `num_workers`, so it's a few minutes, not many). Keep `data.cache_dir` on the
+  persistent volume and it's computed **once ever**; every later run/model loads
+  `class_stats_*.npz` in seconds. Since the default split is deterministic, you
+  can also `git add` that `.npz` once and commit it, so even a fresh clone skips
+  the pass entirely.
 - To visualise on a different machine (e.g. Colab) instead of the pod, just
   copy the `outputs/` folder over — notebook 07 reads from `outputs/<model>/best.ckpt`.
 
@@ -291,11 +298,26 @@ What is wired and verified end-to-end:
 - **Class-balance pipeline** with inverse-sqrt-frequency loss weights and a
   WeightedRandomSampler over the train split. The per-frame pass decodes **only
   the masks** at native resolution (skipping the RGB image decode and the
-  letterbox-resize the eval transform would apply), and is cached to
-  `<data.cache_dir>/class_stats_<loader>_seed<seed>.npz`, so the **first** run's
-  startup is much shorter and re-runs / subsequent models start in seconds. The
-  pass prints `[class-stats] N/M masks` progress so it's clearly working, not
-  hung.
+  letterbox-resize the eval transform would apply) and **fans the decode out
+  across `num_workers`** processes, so the one-time pass is much shorter. It is
+  cached to `<data.cache_dir>/class_stats_<loader>_seed<seed>.npz`, so re-runs /
+  subsequent models start in seconds. The pass prints `[class-stats] N/M masks`
+  progress so it's clearly working, not hung. Because the default split is
+  deterministic, that `.npz` can even be committed/shared to skip the **first**
+  run's pass entirely (see the RunPod tips).
+
+  Counting native-resolution masks is also **more accurate**, not just faster:
+  the old pass counted the *eval-transformed* mask, i.e. the 1024×1024 letterbox
+  in which ~44% of pixels are zero-**padding** counted as `background` — so the
+  measured class distribution was skewed (background inflated, every other class
+  deflated). Native-resolution counts reflect the dataset's true distribution.
+  The effect on training is negligible by design: the loss weights are clipped to
+  `[0.5, 30]`, so the extreme classes are unchanged (`background` pins to the
+  floor, `cystic_duct`/`cystic_artery` pin to the ceiling either way), and the
+  sampler is unaffected — letterbox only *upsamples*, so per-frame class
+  *presence* is identical, and the per-frame weights shift by a near-constant
+  factor that `WeightedRandomSampler` normalizes away. (The stats cache carries a
+  `version` field, so an older padding-contaminated `.npz` recomputes once.)
 - **Terminal per-epoch progress.** An `EpochProgress` callback prints one
   flushed line per epoch — `[epoch 12/100] 87.3s train_loss=… val_miou=…
   val_cystic_duct_dice=…` — so a run is followable in a plain RunPod/Colab
