@@ -20,9 +20,14 @@ class FocalLoss(nn.Module):
         self.gamma = gamma
         self.ignore_index = ignore_index
         if class_weights is not None:
+            # persistent=False: class weights are recomputed from the data every
+            # run (not learned), so they must NOT live in the checkpoint -- else
+            # a run with weighting can't resume one without it (or vice versa),
+            # which fails strict state_dict loading on "focal.class_weights".
             self.register_buffer(
                 "class_weights",
                 torch.as_tensor(class_weights, dtype=torch.float32),
+                persistent=False,
             )
         else:
             self.class_weights = None
