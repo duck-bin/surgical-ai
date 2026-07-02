@@ -32,6 +32,12 @@ from src.data.class_balance import (
     window_sample_weights,
 )
 from src.data.endoscapes_seg import EndoscapesSegDataset
+from src.data.joint_seg import (
+    CHOLECSEG8K_LABELED_CLASSES,
+    ENDOSCAPES_LABELED_CLASSES,
+    JointSegDataset,
+    LabeledClassDataset,
+)
 from src.data.transforms import build_eval_transforms, build_train_transforms
 from src.models.sam2_lora import SAM2LoRASegmenter
 from src.models.temporal import TemporalSAM2LoRASegmenter
@@ -144,6 +150,49 @@ def _make_dataset_fn(cfg):
                                         copy_paste=copy_paste, **kwargs)
 
         return make, False, "endoscapes2023_seg"
+
+    if name in ("joint_seg", "joint"):
+        # Union of the two complementary, partially-labelled sources into ONE
+        # 6-class model (the end-to-end enabler): CholecSeg8k supplies the big
+        # anatomy (liver/gallbladder/tool), Endoscapes-Seg the CVS-critical
+        # cystic_duct/cystic_artery. Each sample is tagged with its source's
+        # labeled-class mask so the marginal loss supervises only those classes.
+        cs = cfg.data.cholecseg8k
+        es = cfg.data.endoscapes
+        cs_common = dict(hf_repo=cs.hf_repo, cache_dir=cs.cache_dir,
+                         image_size=cfg.data.image_size,
+                         split_seed=cs.split.seed)
+        es_common = dict(root=es.root, image_size=cfg.data.image_size)
+
+        def make(split, transform, copy_paste=None, window=None):
+            if window is not None:
+                raise ValueError(
+                    "Joint CholecSeg8k+Endoscapes-Seg training is frame-level "
+                    "only (Endoscapes-Seg keyframes are ~1/30s apart, so no "
+                    "temporal windows) -- use a frame-level model, e.g. "
+                    "model=sam2_lora.")
+            if split == "train":
+                # Endoscapes first so copy-paste harvesting (which stops once
+                # the rare-class bank is full) hits the duct/artery frames early
+                # instead of decoding all of CholecSeg8k to find none.
+                endo = EndoscapesSegDataset(split="train", transform=transform,
+                                            copy_paste=copy_paste, **es_common)
+                cholec = CholecSeg8kDataset(split="train", transform=transform,
+                                            **cs_common)
+                return JointSegDataset([
+                    LabeledClassDataset(endo, ENDOSCAPES_LABELED_CLASSES),
+                    LabeledClassDataset(cholec, CHOLECSEG8K_LABELED_CLASSES),
+                ])
+            # Validate/test on Endoscapes-Seg -- the split that labels the
+            # CVS-critical duct/artery, so val_cystic_duct_dice (the selection
+            # metric) stays meaningful; CholecSeg8k-side (liver) quality is
+            # checked via the CholecSeg8k benchmark. Wrapped so every batch
+            # carries `labeled` and the training loop takes the marginal path.
+            endo = EndoscapesSegDataset(split=split, transform=transform,
+                                        **es_common)
+            return LabeledClassDataset(endo, ENDOSCAPES_LABELED_CLASSES)
+
+        return make, False, f"joint_seg_seed{cs.split.seed}"
 
     raise ValueError(f"Unknown data loader '{name}'.")
 

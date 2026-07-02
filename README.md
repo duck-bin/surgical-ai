@@ -43,6 +43,21 @@ encoder's attention; the small mask decoder is fully fine-tuned and repurposed
 to emit a prompt-free dense 6-class logit map (`num_multimask_outputs = 6`, no
 point/box prompts). Baseline: EfficientNet-B4 U-Net.
 
+**Joint multi-dataset training** (`data=joint_seg`). The end-to-end pipeline
+needs *one* model that emits all six classes, but each dataset labels only a
+subset: CholecSeg8k has the big anatomy (liver/gallbladder/tool) but effectively
+not the cystic duct and never the cystic artery, while Endoscapes-Seg labels the
+CVS-critical cystic_duct/cystic_artery (and gallbladder/tool) but no liver. The
+`joint_seg` loader trains one model on the union of both, tagging each sample
+with a `labeled` mask of the classes its source annotates and supervising
+through a **marginal (partial-label) loss** (`src/losses/partial_label.py`): a
+source's un-annotated classes are folded into its background probability, so the
+model may predict liver on an Endoscapes frame — and the duct on a CholecSeg8k
+frame — without penalty. It reduces exactly to the ordinary focal + Dice/Tversky
+loss when every class is labelled, so single-dataset runs are unchanged. See
+[`docs/RESEARCH_DIRECTION.md`](docs/RESEARCH_DIRECTION.md) for the full
+rationale.
+
 **Temporal variant** (`model=sam2_temporal`). Adds a lightweight ConvGRU head
 over a window of `T = 3` consecutive frames' native mask-decoder outputs and a
 zero-init residual: at initialisation it reproduces the frame-level model
@@ -172,6 +187,10 @@ python -m src.train.train_segmentation model=sam2_temporal
 # Endoscapes-Seg instead (frame-level; copy-paste recommended for the rare classes):
 python -m src.train.train_segmentation data=endoscapes2023_seg model=sam2_lora \
        copy_paste.enabled=true
+# RECOMMENDED for end-to-end: ONE model over BOTH datasets (partial-label loss),
+# so a single checkpoint emits all 6 classes to feed the CVS classifier:
+python -m src.train.train_segmentation data=joint_seg model=sam2_lora \
+       copy_paste.enabled=true
 python -m src.train.train_cvs
 
 # 4. Benchmark + visualization + demo
@@ -200,9 +219,16 @@ pip install -r requirements.txt
 bash scripts/download_cholecseg8k.sh       # ~3 GB (liver/gallbladder/tool)
 bash scripts/download_endoscapes.sh        # ~5.9 GB (the cystic_duct/artery source)
 
-# 4a. cystic_duct / cystic_artery on Endoscapes-Seg (the CVS-critical structures;
-#     CholecSeg8k barely labels them -- see "Why cystic_duct = 0"). Frame-level
-#     only; copy_paste recommended. This is the run that matters for CVS.
+# 4a. JOINT run (recommended for end-to-end): ONE model over CholecSeg8k +
+#     Endoscapes-Seg via the partial-label loss, so a single checkpoint emits all
+#     6 classes (liver from CholecSeg8k, cystic_duct/artery from Endoscapes) to
+#     feed the CVS classifier. Frame-level only; copy_paste recommended.
+python -m src.train.train_segmentation \
+       data=joint_seg model=sam2_lora \
+       low_memory=false num_workers=4 copy_paste.enabled=true wandb.mode=online
+
+#     (Alternative) duct/artery from Endoscapes-Seg alone -- learns the tubular
+#     structures but NOT liver, so it is not a complete 6-class model on its own.
 python -m src.train.train_segmentation \
        data=endoscapes2023_seg model=sam2_lora \
        low_memory=false num_workers=4 copy_paste.enabled=true wandb.mode=online
@@ -344,11 +370,23 @@ What is wired and verified end-to-end:
 - **Smoke tests** (CPU CI + a tiny notebook 06 run) keep the temporal path,
   Lightning module, and window dataset honest end-to-end.
 
+- **Joint partially-labelled segmentation** (`data=joint_seg`). One 6-class
+  model trained on the union of CholecSeg8k + Endoscapes-Seg with a marginal
+  (partial-label) loss (`src/losses/partial_label.py`,
+  `src/data/joint_seg.py`), so a single checkpoint emits all six classes for the
+  CVS classifier. Wired end-to-end and covered by CPU tests; the confirming GPU
+  run is pending (see below).
+
 What is **not** done yet (so the results table is what it is):
 
+- The **joint segmentation run** (`data=joint_seg model=sam2_lora`) that
+  produces the single all-6-class checkpoint. Code + tests are in; the multi-hour
+  GPU run and its numbers are pending. This is now the primary run for the
+  end-to-end pipeline (see [`docs/RESEARCH_DIRECTION.md`](docs/RESEARCH_DIRECTION.md)).
 - Frame-level baselines (`unet_baseline`, `sam2_lora`) at full schedule —
   needed for a fair comparison.
-- CVS classifier training (Endoscapes2023 — manual PhysioNet download required).
+- CVS classifier training (Endoscapes2023 — manual PhysioNet download required),
+  pointed at the joint checkpoint.
 - Re-running `sam2_temporal` to lift `cystic_duct` Dice off zero. The three
   root causes (early-stop on the rare-class metric, the sampler being disabled
   for the temporal path, and the over-tight loss-weight clip) are fixed in code;
@@ -356,7 +394,12 @@ What is **not** done yet (so the results table is what it is):
 
 ## 5. Limitations
 
-- Single segmentation dataset (CholecSeg8k) for pretraining.
+- Joint training spans two datasets (CholecSeg8k + Endoscapes-Seg) with
+  different scopes/centres; the marginal loss prevents the two from actively
+  suppressing each other's classes but cannot guarantee cross-domain
+  generalisation (e.g. liver learned on CholecSeg8k transferring cleanly to
+  Endoscapes frames). Validation/test run on Endoscapes only, so liver quality
+  is tracked post-hoc via the CholecSeg8k benchmark rather than during training.
 - Temporal modeling (`sam2_temporal`) is implemented and trained; the
   frame-level baselines (`unet_baseline`, `sam2_lora`) have not yet been
   trained to completion, so a fair frame-vs-temporal comparison is still

@@ -23,6 +23,7 @@ from src.eval.metrics import (
 )
 from src.losses.dice import DiceLoss
 from src.losses.focal import FocalLoss
+from src.losses.partial_label import PartialLabelSegLoss
 from src.losses.tversky import TverskyLoss
 
 
@@ -77,6 +78,15 @@ class SegmentationModule(pl.LightningModule):
                                       gamma=tversky_gamma)
         else:
             self.region = DiceLoss()
+        # Partial-label (marginal) variant of the same focal + region loss, used
+        # only when a batch carries a per-sample ``labeled`` mask (joint
+        # CholecSeg8k+Endoscapes-Seg training). With every class labelled it is
+        # numerically the same loss, so single-dataset runs are unaffected.
+        self.partial_loss = PartialLabelSegLoss(
+            focal_weight=focal_weight, region_weight=dice_weight,
+            focal_gamma=focal_gamma, class_weights=class_weights,
+            region_loss=region_loss, tversky_alpha=tversky_alpha,
+            tversky_beta=tversky_beta, tversky_gamma=tversky_gamma)
         # Per-class Dice is aggregated at epoch end (not per-step): a class
         # absent from a batch yields NaN, which would poison a running mean and
         # break the monitored ``val_<class>_dice`` checkpoint/early-stop metric.
@@ -88,8 +98,15 @@ class SegmentationModule(pl.LightningModule):
     def _shared_step(self, batch, stage: str):
         logits = self(batch["image"])
         target = batch["mask"]
-        loss = (self.focal_weight * self.focal(logits, target)
-                + self.dice_weight * self.region(logits, target))
+        # Joint partially-labelled batches carry a per-sample ``labeled`` mask;
+        # supervise through the marginal loss so each source's unlabelled classes
+        # are folded into background instead of penalised. Single-dataset batches
+        # (no ``labeled``) take the ordinary focal + region loss unchanged.
+        if "labeled" in batch:
+            loss = self.partial_loss(logits, target, batch["labeled"])
+        else:
+            loss = (self.focal_weight * self.focal(logits, target)
+                    + self.dice_weight * self.region(logits, target))
 
         preds = logits.argmax(dim=1)
         _, miou = iou_score(preds, target, self.num_classes)

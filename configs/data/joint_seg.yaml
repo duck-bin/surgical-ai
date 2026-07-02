@@ -1,0 +1,37 @@
+# Joint CholecSeg8k + Endoscapes-Seg segmentation -- ONE partially-labelled
+# 6-class training set, the enabler for a single end-to-end CVS model.
+#
+# The two sources are complementary and each only annotates a subset of the 6
+# shared classes; a per-sample `labeled` mask (src/data/joint_seg.py) records
+# which, and the marginal loss (src/losses/partial_label.py) supervises only
+# those, folding the rest into background so the datasets don't fight over it:
+#
+#   CholecSeg8k     -> background, liver, gallbladder, tool
+#   Endoscapes-Seg  -> background, gallbladder, cystic_duct, cystic_artery, tool
+#
+# Train = union of both train splits. Val/test = Endoscapes-Seg (it labels the
+# CVS-critical duct/artery, so val_cystic_duct_dice stays meaningful); liver
+# quality is checked via the CholecSeg8k benchmark.
+#
+# Frame-level only (Endoscapes-Seg keyframes are ~1/30s apart -> no temporal
+# windows). Download both:
+#   bash scripts/download_cholecseg8k.sh
+#   bash scripts/download_endoscapes.sh
+name: joint_seg
+loader: joint_seg
+
+cholecseg8k:                          # big-anatomy source (liver/gallbladder/tool)
+  hf_repo: minwoosun/CholecSeg8k
+  cache_dir: ./data/cholecseg8k
+  split:
+    seed: 42                          # video-level split seed (keys the stats cache)
+
+endoscapes:                           # cystic_duct/cystic_artery source
+  root: ./data/endoscapes2023
+
+cache_dir: ./data/joint_seg           # class-statistics cache location
+
+num_classes: 6
+class_names: [background, liver, gallbladder, cystic_duct, cystic_artery, tool]
+
+image_size: 1024                      # SAM2 Hiera resolution; 512 also fine for U-Net

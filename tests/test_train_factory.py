@@ -36,6 +36,19 @@ def test_cholecseg8k_branch_supports_temporal_and_keys_by_seed():
     assert stats_key == "cholecseg8k_seed7"
 
 
+def test_joint_branch_is_frame_only_and_keys_by_seed():
+    """Joint CholecSeg8k+Endoscapes-Seg: frame-level, stats key namespaced by seed."""
+    make, supports_temporal, stats_key = _make_dataset_fn(OmegaConf.create(
+        {"data": {"name": "joint_seg", "loader": "joint_seg", "image_size": 512,
+                  "cholecseg8k": {"hf_repo": "r", "cache_dir": "./c",
+                                  "split": {"seed": 42}},
+                  "endoscapes": {"root": "./e"}}}))
+    assert supports_temporal is False
+    assert stats_key == "joint_seg_seed42"
+    with pytest.raises(ValueError):           # temporal window rejected, no disk I/O
+        make("train", None, window=3)
+
+
 def test_unknown_loader_raises():
     with pytest.raises(ValueError):
         _make_dataset_fn(OmegaConf.create({"data": {"name": "mystery"}}))
